@@ -19,6 +19,7 @@ import hashlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass
@@ -39,6 +40,27 @@ _LOCKFILE_NAMES = ("uv.lock", "poetry.lock", "requirements.txt", "package-lock.j
 
 _git_cache: dict[str, GitMetadata | None] = {}
 _dependency_cache: dict[str, DependencySnapshot | None] = {}
+
+
+def _redact_remote_url(url: str) -> str:
+    """`git remote get-url origin` can return a URL with a real secret
+    embedded in it (`https://<token>@github.com/...` or
+    `https://user:password@host/...` — a common pattern for CI/PAT-based
+    pushes). This is persisted to the database and shown directly on the
+    dashboard, so any embedded credential must never reach either —
+    strips the userinfo portion, leaving the host/path intact for
+    identification. SSH remotes (`git@github.com:...`) aren't touched:
+    the `git` there is a fixed convention, not a secret."""
+    if "://" not in url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if "@" not in parts.netloc:
+        return url
+    _, _, host = parts.netloc.rpartition("@")
+    return urlunsplit((parts.scheme, f"[REDACTED]@{host}", parts.path, parts.query, parts.fragment))
 
 
 def _run_git(args: list[str], cwd: str) -> str | None:
@@ -78,7 +100,7 @@ def get_git_metadata(cwd: str | None = None) -> GitMetadata | None:
         commit_sha=commit_sha,
         branch=branch or None,
         dirty=(dirty_output != "") if dirty_output is not None else None,
-        remote=remote or None,
+        remote=_redact_remote_url(remote) if remote else None,
     )
     _git_cache[resolved_cwd] = metadata
     return metadata

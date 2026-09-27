@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agentguard.versioning import (
+    _redact_remote_url,
     get_dependency_snapshot,
     get_git_metadata,
     reset_versioning_cache,
@@ -84,6 +85,45 @@ def test_get_dependency_snapshot_finds_uv_lock(tmp_path):
 
 def test_get_dependency_snapshot_returns_none_when_no_lockfile_present(tmp_path):
     assert get_dependency_snapshot(cwd=str(tmp_path)) is None
+
+
+def test_redact_remote_url_strips_embedded_token():
+    """A PAT/credential embedded in a remote URL (a real, common pattern
+    for CI/scripted pushes) must never reach the database or the
+    dashboard verbatim."""
+    assert _redact_remote_url("https://ghp_abc123token@github.com/user/repo.git") == \
+        "https://[REDACTED]@github.com/user/repo.git"
+
+
+def test_redact_remote_url_strips_embedded_username_and_password():
+    assert _redact_remote_url("https://myuser:s3cr3t@gitlab.example.com/team/repo.git") == \
+        "https://[REDACTED]@gitlab.example.com/team/repo.git"
+
+
+def test_redact_remote_url_leaves_plain_https_remote_unchanged():
+    assert _redact_remote_url("https://github.com/user/repo.git") == "https://github.com/user/repo.git"
+
+
+def test_redact_remote_url_leaves_ssh_remote_unchanged():
+    assert _redact_remote_url("git@github.com:user/repo.git") == "git@github.com:user/repo.git"
+
+
+def test_get_git_metadata_redacts_a_credential_embedded_in_the_remote(tmp_path):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://ghp_supersecrettoken@github.com/user/repo.git"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "a.txt").write_text("hello")
+    subprocess.run(["git", "add", "a.txt"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
+
+    metadata = get_git_metadata(cwd=str(tmp_path))
+    assert metadata is not None
+    assert metadata.remote == "https://[REDACTED]@github.com/user/repo.git"
+    assert "ghp_supersecrettoken" not in metadata.remote
 
 
 def test_get_dependency_snapshot_hash_changes_with_content(tmp_path):
