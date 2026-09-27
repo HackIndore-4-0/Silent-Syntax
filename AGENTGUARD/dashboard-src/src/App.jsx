@@ -19,6 +19,7 @@ import {
   EvalRunDetail, EvalRuns, Suites,
 } from './pages/EvalPlatform'
 import { ApiKeys, Profile, Team } from './pages/Settings'
+import Skills from './pages/Skills'
 
 const crumb = (label, to) => ({ label, to })
 
@@ -64,6 +65,7 @@ const router = createHashRouter([
       { path: 'settings/api-keys', element: <ApiKeys />, handle: { crumbs: () => [crumb('Settings', '/settings/api-keys'), crumb('API Keys')] } },
       { path: 'settings/profile', element: <Profile />, handle: { crumbs: () => [crumb('Settings', '/settings/profile'), crumb('Profile')] } },
       { path: 'settings/team', element: <Team />, handle: { crumbs: () => [crumb('Settings', '/settings/team'), crumb('Team / Users')] } },
+      { path: 'skills', element: <Skills />, handle: { crumbs: () => [crumb('Skills')] } },
     ],
   },
   { path: '*', element: <Navigate to="/overview" replace /> },
