@@ -170,6 +170,18 @@ class TestEvaluationSuitePersistenceAndWorkspaceScoping:
         assert fetched["metrics"][0]["evaluator"] == "custom.faithfulness"
         assert fetched["metrics"][0]["recommended_by"] == "auto"
 
+    async def test_suite_metric_config_defaults_to_empty_dict_and_round_trips(self, fake_repository):
+        suite = EvaluationSuite(
+            name="geval_suite",
+            metrics=[SuiteMetric(evaluator="deepeval.geval", config={"evaluation_steps": ["check tone"]})],
+        )
+        assert SuiteMetric(evaluator="custom.a").config == {}
+        await fake_repository.save_evaluation_suite(suite)
+
+        fetched = await fake_repository.get_evaluation_suite(suite.id)
+
+        assert fetched["metrics"][0]["config"] == {"evaluation_steps": ["check tone"]}
+
     async def test_evaluation_runs_are_scoped_per_workspace(self, fake_repository):
         suite = EvaluationSuite(name="s", metrics=[SuiteMetric(evaluator="custom.a")])
         engine = EvaluationEngine(fake_repository, {"custom.a": _always_scores("custom.a", 0.5)})

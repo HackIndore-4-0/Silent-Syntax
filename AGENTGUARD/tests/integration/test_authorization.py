@@ -369,3 +369,56 @@ def test_user_a_cannot_diagnose_user_b_eval_results(repo, client):
 
     alice_client = _fresh_client_for(alice["cookies"])
     assert alice_client.post(f"/api/v2/eval-results/{result_id}/diagnose").status_code == 200
+
+
+def test_alice_can_create_and_run_an_evaluation_suite_end_to_end(repo, client):
+    from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND, Worker, make_evaluation_run_handler
+
+    alice = _signup_and_seed_run(repo, client, email="alice10@example.com", name="Alice10")
+    alice_client = _fresh_client_for(alice["cookies"])
+
+    create_response = alice_client.post("/api/v2/suites", json={"name": "alice_suite", "metrics": [{"evaluator": "trajectory"}]})
+    assert create_response.status_code == 200
+    suite_id = create_response.json()["id"]
+    assert any(s["id"] == suite_id for s in alice_client.get("/api/v2/suites").json())
+
+    run_response = alice_client.post("/api/v2/eval-runs", json={"suite_id": suite_id, "source_run_ids": [alice["run_id"]]})
+    assert run_response.status_code == 202
+    job_id = run_response.json()["job_id"]
+    assert alice_client.get(f"/api/v2/jobs/{job_id}").json()["kind"] == EVALUATION_SUITE_RUN_JOB_KIND
+
+    worker = Worker(repo, {EVALUATION_SUITE_RUN_JOB_KIND: make_evaluation_run_handler(repo)})
+    asyncio.run(worker.run_once())
+
+    assert alice_client.get(f"/api/v2/jobs/{job_id}").json()["status"] == "complete"
+    eval_runs = alice_client.get("/api/v2/eval-runs").json()
+    assert len(eval_runs) == 1
+    detail = alice_client.get(f"/api/v2/eval-runs/{eval_runs[0]['id']}").json()
+    assert detail["results"][0]["metric"] == "trajectory"
+
+
+def test_user_a_cannot_create_eval_run_against_user_b_suite(repo, client):
+    alice = _signup_and_seed_run(repo, client, email="alice11@example.com", name="Alice11")
+    bob = _signup_and_seed_run(repo, client, email="bob11@example.com", name="Bob11")
+    alice_client = _fresh_client_for(alice["cookies"])
+    bob_client = _fresh_client_for(bob["cookies"])
+
+    bob_suite_id = bob_client.post("/api/v2/suites", json={"name": "bob_suite", "metrics": []}).json()["id"]
+
+    response = alice_client.post("/api/v2/eval-runs", json={"suite_id": bob_suite_id, "source_run_ids": [alice["run_id"]]})
+
+    assert response.status_code == 404
+    assert asyncio.run(repo.list_jobs()) == []
+
+
+def test_user_a_cannot_create_eval_run_against_user_b_owned_run(repo, client):
+    alice = _signup_and_seed_run(repo, client, email="alice12@example.com", name="Alice12")
+    bob = _signup_and_seed_run(repo, client, email="bob12@example.com", name="Bob12")
+    alice_client = _fresh_client_for(alice["cookies"])
+
+    suite_id = alice_client.post("/api/v2/suites", json={"name": "alice_suite2", "metrics": []}).json()["id"]
+
+    response = alice_client.post("/api/v2/eval-runs", json={"suite_id": suite_id, "source_run_ids": [bob["run_id"]]})
+
+    assert response.status_code == 404
+    assert asyncio.run(repo.list_jobs()) == []

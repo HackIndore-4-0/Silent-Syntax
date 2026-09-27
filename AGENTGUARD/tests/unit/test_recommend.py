@@ -35,6 +35,12 @@ async def _make_run_with_step(repo, *, agent_name, step_name=None, parent_run_id
     return run.id
 
 
+async def _make_run_with_task_and_output(repo, *, agent_name, task=None, final_state=None):
+    run = Run(agent_name=agent_name, status=RunStatus.STOP, task=task, final_state=final_state)
+    await repo.create_run(run)
+    return run.id
+
+
 class TestEvaluationRecommendationEngine:
     async def test_retrieval_shaped_traces_recommend_rag_metrics(self, fake_repository):
         for _ in range(5):
@@ -86,3 +92,60 @@ class TestEvaluationRecommendationEngine:
         stored = await fake_repository.list_recommendations(kind="metric_suite")
         assert len(stored) == 1
         assert stored[0]["subject_id"] == "bot"
+
+    async def test_summarization_shaped_traces_recommend_summarization_metric(self, fake_repository):
+        long_output = {"summary": "word " * 200}
+        for _ in range(5):
+            await _make_run_with_task_and_output(
+                fake_repository, agent_name="summarizer_bot", task="summarize this", final_state=long_output
+            )
+        engine = EvaluationRecommendationEngine(fake_repository)
+
+        suite = await engine.recommend("summarizer_bot")
+
+        assert suite.app_type == "summarization"
+        evaluators = {m.evaluator for m in suite.metrics}
+        assert "deepeval.summarization" in evaluators
+
+    async def test_json_output_shaped_traces_recommend_no_auto_metric_but_flags_it(self, fake_repository):
+        long_task = "extract the following fields from this document and return them as structured json output"
+        for _ in range(5):
+            await _make_run_with_task_and_output(
+                fake_repository, agent_name="json_bot", task=long_task,
+                final_state={"result": {"nested": "structure", "count": 2}},
+            )
+        engine = EvaluationRecommendationEngine(fake_repository)
+
+        suite = await engine.recommend("json_bot")
+
+        assert suite.app_type == "json_output_agent"
+        assert "deepeval.json_correctness" not in {m.evaluator for m in suite.metrics}
+        stored = await fake_repository.list_recommendations(kind="metric_suite")
+        assert "json" in stored[-1]["reasoning"]
+
+    async def test_safety_sensitive_traces_recommend_bias_toxicity_and_flagged_non_advice(self, fake_repository):
+        for _ in range(5):
+            await _make_run_with_task_and_output(
+                fake_repository, agent_name="advice_bot", task="give medical advice about diabetes"
+            )
+        engine = EvaluationRecommendationEngine(fake_repository)
+
+        suite = await engine.recommend("advice_bot")
+
+        assert suite.app_type == "safety_sensitive"
+        evaluators = {m.evaluator for m in suite.metrics}
+        assert "deepeval.bias" in evaluators
+        assert "deepeval.toxicity" in evaluators
+        assert "deepeval.non_advice" in evaluators
+        non_advice = next(m for m in suite.metrics if m.evaluator == "deepeval.non_advice")
+        assert non_advice.config == {}
+        assert "advice_types" in non_advice.reason
+
+    async def test_new_shapes_do_not_fire_on_existing_fixtures(self, fake_repository):
+        for _ in range(5):
+            await _make_run_with_step(fake_repository, agent_name="cross_check_bot", step_name="search_policies")
+        engine = EvaluationRecommendationEngine(fake_repository)
+
+        suite = await engine.recommend("cross_check_bot")
+
+        assert suite.app_type == "rag"  # not overridden by any new shape

@@ -815,6 +815,10 @@ class SuiteMetric(BaseModel):
     None leaves `passed` as whatever the evaluator itself reported."""
     recommended_by: SuiteMetricSource = "manual"
     reason: str = ""
+    config: dict[str, Any] = Field(default_factory=dict)
+    """Extra constructor kwargs for the resolved evaluator (e.g. deepeval.geval's
+    evaluation_steps, deepeval.non_advice's advice_types) — empty for evaluators
+    needing only threshold/model."""
 
 
 class EvaluationSuite(BaseModel):

@@ -40,6 +40,8 @@ from agentguard.reliability.tool_profile import ToolProfileEngine
 from agentguard.replay import replay as replay_run
 from agentguard.evaluation.diagnose import diagnose_evaluation_failure
 from agentguard.evaluation.recommend import EvaluationRecommendationEngine
+from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND
+from agentguard.models import EvaluationSuite, Job, SuiteMetric
 from pydantic import BaseModel
 
 from .auth import get_current_workspace_id
@@ -807,6 +809,23 @@ async def list_suites_v2(workspace_id: str = Depends(get_current_workspace_id)):
     return await get_repository().list_evaluation_suites(workspace_id=workspace_id)
 
 
+class SuiteCreateRequestV2(BaseModel):
+    name: str
+    app_type: str | None = None
+    metrics: list[SuiteMetric] = []
+
+
+@router.post("/suites")
+async def create_suite_v2(body: SuiteCreateRequestV2, workspace_id: str = Depends(get_current_workspace_id)):
+    """`GET /suites/recommend` below builds a preview suite but never
+    persists it — this is the endpoint that closes that gap, so the
+    dashboard flow is: recommend (preview) -> review/edit -> POST /suites
+    (persist) -> POST /eval-runs (trigger)."""
+    suite = EvaluationSuite(name=body.name, workspace_id=workspace_id, app_type=body.app_type, metrics=body.metrics)
+    await get_repository().save_evaluation_suite(suite)
+    return suite.model_dump(mode="json")
+
+
 @router.get("/suites/recommend")
 async def recommend_suite_v2(agent_name: str, workspace_id: str = Depends(get_current_workspace_id)):
     engine = EvaluationRecommendationEngine(get_repository())
@@ -833,6 +852,46 @@ async def get_eval_run_v2(evaluation_run_id: str, workspace_id: str = Depends(ge
         raise HTTPException(status_code=404, detail="evaluation run not found")
     results = await repository.list_evaluation_results(evaluation_run_id)
     return {"evaluation_run": evaluation_run, "results": results}
+
+
+class EvalRunCreateRequestV2(BaseModel):
+    suite_id: str
+    source_run_ids: list[str]
+
+
+@router.post("/eval-runs", status_code=202)
+async def create_eval_run_v2(body: EvalRunCreateRequestV2, workspace_id: str = Depends(get_current_workspace_id)):
+    """Enqueues an evaluation_suite_run job rather than executing
+    synchronously (a suite run can take minutes over many cases/metrics).
+    Every source_run_id's ownership is checked here, before enqueueing —
+    isolation enforced at the API boundary, not inside the job handler —
+    so a caller gets an immediate 404 instead of a job that silently
+    skips runs it can't see. Returns just a job_id: EvaluationRunStatus
+    has no "queued" value yet and EvaluationEngine.run_suite() only
+    creates the EvaluationRun row once cases are being evaluated, so the
+    dashboard polls GET /jobs/{job_id} first and switches to the existing
+    GET /eval-runs/{id} once the run appears."""
+    repository = get_repository()
+    suite = await repository.get_evaluation_suite(body.suite_id)
+    if suite is None or suite.get("workspace_id") not in (workspace_id, None):
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    for run_id in body.source_run_ids:
+        await _owned_run(workspace_id, run_id)
+    job = Job(
+        kind=EVALUATION_SUITE_RUN_JOB_KIND,
+        payload={"suite_id": body.suite_id, "source_run_ids": body.source_run_ids, "workspace_id": workspace_id},
+        workspace_id=workspace_id,
+    )
+    await repository.enqueue_job(job)
+    return {"job_id": job.id, "status": "queued"}
+
+
+@router.get("/jobs/{job_id}")
+async def get_job_v2(job_id: str, workspace_id: str = Depends(get_current_workspace_id)):
+    job = await get_repository().get_job(job_id)
+    if job is None or job.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @router.post("/eval-results/{result_id}/diagnose")
