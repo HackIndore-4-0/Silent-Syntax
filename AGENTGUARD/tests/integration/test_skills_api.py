@@ -70,6 +70,25 @@ def test_generate_for_an_owned_project_returns_markdown(repo, client):
     assert "${AGENTGUARD_API_KEY}" in markdown
 
 
+def test_generate_with_a_custom_judge_model_uses_it(repo, client):
+    session = _login(client, email="skills6@example.com", name="Skills6", repo=repo)
+    c = TestClient(client.app, cookies=session["cookies"])
+    project_id = session["signup"].project.id
+
+    response = c.post("/api/v2/skills/generate", json={
+        "project_id": project_id,
+        "framework": "plain_python",
+        "categories": ["safety"],
+        "metrics": {"safety": ["deepeval.bias"]},
+        "judge_model": "claude-sonnet-5",
+    })
+
+    assert response.status_code == 200
+    markdown = response.json()["markdown"]
+    assert "claude-sonnet-5" in markdown
+    assert 'default_model="claude-sonnet-5"' in markdown
+
+
 def test_generate_for_another_workspaces_project_is_404(repo, client):
     alice = _login(client, email="skills3a@example.com", name="Skills3a", repo=repo)
     bob = _login(client, email="skills3b@example.com", name="Skills3b", repo=repo)

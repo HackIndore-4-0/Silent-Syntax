@@ -3,6 +3,7 @@ import {
   ClipboardCheck, ShieldCheck, Bot, Zap, RotateCcw, GitCompare,
   FileCheck, FileText, Bug, TrendingDown, Sparkles, PlayCircle,
   Database, FolderKanban, BarChart2, Lightbulb, KeyRound, UserRound, Users,
+  Terminal,
 } from 'lucide-react'
 
 const ICONS = {
@@ -10,6 +11,7 @@ const ICONS = {
   ClipboardCheck, ShieldCheck, Bot, Zap, RotateCcw, GitCompare,
   FileCheck, FileText, Bug, TrendingDown, Sparkles, PlayCircle,
   Database, FolderKanban, BarChart2, Lightbulb, KeyRound, UserRound, Users,
+  Terminal,
 }
 
 export function NavIcon({ name, size = 18 }) {
