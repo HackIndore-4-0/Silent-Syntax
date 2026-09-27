@@ -1,0 +1,13 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+langchain==0.3.30
+langchain-core==0.3.86
+langchain-groq==0.3.8
+pydantic==2.9.2
+email-validator==2.2.0
+python-dotenv==1.0.1
+
+# Required by the vendored ./agentguard SDK (evaluator integration)
+opentelemetry-api==1.45.0
+opentelemetry-sdk==1.45.0
+asyncpg==0.31.0
