@@ -33,6 +33,17 @@ class TestComposeSkill:
         assert "proj-123" in markdown
         assert "http://127.0.0.1:8000" in markdown
 
+    def test_install_instructions_use_git_clone_not_pypi(self):
+        """Regression test: agentguard is NOT published on PyPI (verified
+        directly: https://pypi.org/pypi/agentguard/json -> 404) -- a
+        "pip install agentguard" instruction would fail for anyone who
+        actually followed it. The real distribution mechanism today is
+        cloning the source repo and installing it editable."""
+        markdown = compose_skill(_request())
+        assert "pip install agentguard" not in markdown
+        assert "git clone" in markdown
+        assert "pip install -e ." in markdown
+
     def test_api_key_is_always_the_placeholder_never_a_real_secret(self):
         markdown = compose_skill(_request())
         assert "${AGENTGUARD_API_KEY}" in markdown
@@ -49,7 +60,7 @@ class TestComposeSkill:
 
     def test_no_categories_selected_still_produces_a_valid_skill(self):
         markdown = compose_skill(_request(selected_categories=()))
-        assert "## 2." in markdown  # framework body section present
+        assert "## 3." in markdown  # framework body section present
         assert "RAG evaluation" not in markdown  # no category sections
 
     def test_selected_category_section_appears_with_only_its_selected_metrics(self):
@@ -75,6 +86,10 @@ class TestComposeSkill:
     def test_a_category_checked_with_zero_selected_metrics_does_not_render_an_empty_list(self):
         markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
         assert "This project will be scored on" not in markdown
+
+    def test_a_category_checked_with_zero_selected_metrics_is_omitted_entirely(self):
+        markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
+        assert "RAG evaluation" not in markdown
 
     def test_framework_body_is_included_for_each_framework(self):
         for framework_key, expected_snippet in [
@@ -146,7 +161,7 @@ class TestListSkillOptions:
     def test_returns_all_six_categories_with_their_metrics(self):
         options = list_skill_options()
         by_key = {c["key"]: c for c in options["categories"]}
-        assert set(by_key) == {"rag", "safety", "agentic", "hitl", "trajectory", "benchmarking"}
+        assert set(by_key) == {"rag", "safety", "agentic", "other", "hitl", "trajectory", "benchmarking"}
         assert {m["key"] for m in by_key["rag"]["metrics"]} == {
             "deepeval.answer_relevancy", "deepeval.faithfulness", "deepeval.contextual_precision",
             "deepeval.contextual_recall", "deepeval.contextual_relevancy", "deepeval.hallucination",

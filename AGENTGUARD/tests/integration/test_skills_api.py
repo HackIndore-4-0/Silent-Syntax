@@ -47,7 +47,7 @@ def test_options_lists_frameworks_and_categories(repo, client):
     body = response.json()
     assert {f["key"] for f in body["frameworks"]} == {"plain_python", "langgraph", "generic"}
     assert {cat["key"] for cat in body["categories"]} == {
-        "rag", "safety", "agentic", "hitl", "trajectory", "benchmarking",
+        "rag", "safety", "agentic", "other", "hitl", "trajectory", "benchmarking",
     }
     assert {m["key"] for m in body["judge_models"]} == {"gpt-4o-mini", "gpt-4.1", "gpt-4o"}
 

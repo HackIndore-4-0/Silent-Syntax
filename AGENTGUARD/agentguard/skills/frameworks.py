@@ -20,7 +20,7 @@ class FrameworkTemplate:
     body: str
 
 
-_PLAIN_PYTHON_BODY = """## 2. Wrap your agent's entry point
+_PLAIN_PYTHON_BODY = """## 3. Wrap your agent's entry point
 
 Find the function in this repository that receives a task/prompt and
 returns the agent's final answer — usually a single async or sync
@@ -37,7 +37,7 @@ function that calls an LLM. Wrap it with `@monitor`:
         return result
 """
 
-_LANGGRAPH_BODY = """## 2. Wrap your agent's entry point and its internal steps
+_LANGGRAPH_BODY = """## 3. Wrap your agent's entry point and its internal steps
 
 This is a LangGraph `StateGraph`-based agent. Wrap the function that
 calls `graph.ainvoke(...)` (the entry point) with `@monitor`, and wrap
@@ -62,7 +62,7 @@ dashboard's Trace/Steps view:
         return result
 """
 
-_GENERIC_BODY = """## 2. Find the entry point and wrap it
+_GENERIC_BODY = """## 3. Find the entry point and wrap it
 
 No framework was specified. Before writing any code:
 
