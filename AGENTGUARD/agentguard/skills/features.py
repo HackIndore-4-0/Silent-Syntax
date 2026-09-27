@@ -37,8 +37,35 @@ def _metric_lines(selected: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
+# Placeholder values for the few catalog metrics whose required_config
+# can't be inferred generically (deepeval.non_advice/.misuse/.role_violation).
+# Rendered directly into the suite so the Skill works as copy-pasted
+# rather than raising MissingMetricConfigError at run-trigger time --
+# the TODO comment flags that the placeholder should be reviewed, not
+# left silently wrong.
+_REQUIRED_CONFIG_PLACEHOLDERS: dict[str, object] = {
+    "advice_types": ["financial", "medical"],
+    "domain": "customer support",
+    "role": "customer support agent",
+}
+
+
 def _metric_suite_lines(selected: tuple[str, ...]) -> str:
-    return "\n".join(f'        SuiteMetric(evaluator="{key}", threshold=0.7),' for key in selected)
+    lines = []
+    for key in selected:
+        spec = DEEPEVAL_CATALOG.get(key)
+        if spec and spec.required_config:
+            config_items = ", ".join(
+                f"{param!r}: {_REQUIRED_CONFIG_PLACEHOLDERS.get(param, f'REPLACE_ME_{param}')!r}"
+                for param in spec.required_config
+            )
+            lines.append(
+                f'        SuiteMetric(evaluator="{key}", threshold=0.7, config={{{config_items}}}),'
+                f"  # TODO: review this placeholder config for {key} before running"
+            )
+        else:
+            lines.append(f'        SuiteMetric(evaluator="{key}", threshold=0.7),')
+    return "\n".join(lines)
 
 
 def _render_metric_category(label: str, selected: tuple[str, ...]) -> str:

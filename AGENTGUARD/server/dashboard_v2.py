@@ -46,6 +46,7 @@ from agentguard.skills import (
     SkillRequest,
     UnknownCategoryError,
     UnknownFrameworkError,
+    UnknownJudgeModelError,
     compose_skill,
     list_skill_options,
 )
@@ -1060,6 +1061,6 @@ async def generate_skill_v2(body: SkillGenerateRequestV2, workspace_id: str = De
     )
     try:
         markdown = compose_skill(request)
-    except (UnknownFrameworkError, UnknownCategoryError) as exc:
+    except (UnknownFrameworkError, UnknownCategoryError, UnknownJudgeModelError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"markdown": markdown}

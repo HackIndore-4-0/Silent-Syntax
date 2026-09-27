@@ -7,6 +7,7 @@ from agentguard.skills.render import (
     SkillRequest,
     UnknownCategoryError,
     UnknownFrameworkError,
+    UnknownJudgeModelError,
     compose_skill,
     list_skill_options,
 )
@@ -84,6 +85,23 @@ class TestComposeSkill:
             markdown = compose_skill(_request(framework=framework_key))
             assert expected_snippet in markdown
 
+    def test_a_project_name_containing_a_later_token_is_not_rescanned(self):
+        """Regression test: chained .replace() calls rescan the WHOLE
+        string after each substitution. If project_name itself contains
+        the literal text "__JUDGE_MODEL__" (an edge case, but project
+        names are freely settable by any workspace member via
+        POST /api/projects), the later .replace("__JUDGE_MODEL__", ...)
+        call would substitute inside what was just inserted as the
+        project name -- corrupting it. Substitution must happen in a
+        single pass so an already-substituted value is never rescanned."""
+        markdown = compose_skill(_request(
+            project_name="acme __JUDGE_MODEL__ corp",
+            selected_categories=("rag",),
+            selected_metrics={"rag": ("deepeval.faithfulness",)},
+            judge_model="gpt-4.1",
+        ))
+        assert "acme __JUDGE_MODEL__ corp" in markdown
+
     def test_project_name_with_braces_does_not_break_rendering(self):
         """Substitution is plain .replace(), so a project name containing
         '{' or '}' must not raise or corrupt the surrounding code blocks
@@ -104,10 +122,20 @@ class TestComposeSkill:
         markdown = compose_skill(_request(
             selected_categories=("safety",),
             selected_metrics={"safety": ("deepeval.bias",)},
-            judge_model="claude-sonnet-5",
+            judge_model="gpt-4.1",
         ))
-        assert "claude-sonnet-5" in markdown
-        assert 'default_model="claude-sonnet-5"' in markdown
+        assert "gpt-4.1" in markdown
+        assert 'default_model="gpt-4.1"' in markdown
+
+    def test_unknown_judge_model_raises(self):
+        """judge_model isn't free text -- it must be one of
+        JUDGE_MODEL_OPTIONS, same 'explicit gap, never a silent skip'
+        rule as UnknownFrameworkError/UnknownCategoryError. Otherwise an
+        arbitrary string is spliced verbatim into a Python string literal
+        in the generated code (a value containing '\"' would produce
+        syntactically broken output)."""
+        with pytest.raises(UnknownJudgeModelError):
+            compose_skill(_request(judge_model="not-a-real-model"))
 
 
 class TestListSkillOptions:
@@ -126,9 +154,14 @@ class TestListSkillOptions:
         assert by_key["hitl"]["metrics"] == []
 
     def test_returns_judge_model_options(self):
+        """Only models DeepEval's default OpenAI-model resolution can
+        actually use -- an Anthropic model name here would silently be
+        routed to OpenAI (no Anthropic wrapper exists anywhere in
+        agentguard/evaluation/), so it's excluded rather than offered as
+        a judge model that doesn't work."""
         options = list_skill_options()
         keys = {m["key"] for m in options["judge_models"]}
-        assert keys == {"gpt-4o-mini", "gpt-4.1", "claude-sonnet-5"}
+        assert keys == {"gpt-4o-mini", "gpt-4.1", "gpt-4o"}
 
     def test_no_top_level_deepeval_import(self):
         import ast
