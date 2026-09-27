@@ -4,6 +4,8 @@ import ProtectedLayout from './layout/ProtectedLayout'
 import { shortId } from './format'
 
 import { ForgotPassword, Login, ResetPassword, Signup } from './pages/auth/AuthPages'
+import WorkReport from './pages/WorkReport'
+import LandingPage from './pages/LandingPage'
 import Overview from './pages/Overview'
 import RunsList from './pages/RunsList'
 import RunDetail from './pages/RunDetail'
@@ -25,6 +27,8 @@ const router = createHashRouter([
   { path: '/signup', element: <Signup /> },
   { path: '/forgot-password', element: <ForgotPassword /> },
   { path: '/reset-password/:token', element: <ResetPassword /> },
+  { path: '/work-report', element: <WorkReport /> },
+  { path: '/welcome', element: <LandingPage /> },
   {
     path: '/',
     element: <ProtectedLayout />,

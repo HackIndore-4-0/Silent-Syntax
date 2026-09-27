@@ -1,0 +1,666 @@
+AGENTGUARD — DASHBOARD V2 + MULTI-USER AUTHENTICATION
+
+The current AgentGuard dashboard is functionally rich but has poor UX.
+The current UI looks like an internal engineering/debug page rather than a
+professional observability platform.
+
+Do NOT add another feature phase.
+This task is a UX/platform redesign of the existing Phase 1–4 implementation.
+
+OBJECTIVE
+
+Redesign AgentGuard into a polished enterprise-grade observability and
+reliability dashboard inspired by the information architecture of products
+such as LangSmith, Datadog and Grafana, WITHOUT copying their UI.
+
+The platform must support multiple users with strict tenant/user data isolation.
+
+Preserve all existing AgentGuard backend functionality and tests.
+
+==================================================
+1. NEW DASHBOARD INFORMATION ARCHITECTURE
+==================================================
+
+Create a persistent left sidebar:
+
+AGENTGUARD
+
+Overview
+
+OBSERVABILITY
+- Runs / Traces
+- Latency
+- Tokens & Cost
+- Errors
+- Tools
+
+RELIABILITY
+- Evaluations
+- Risk & Confidence
+- Agent Behavior
+
+RECOVERY
+- Interventions
+- Checkpoints / Rollback
+- Replay / Compare
+
+GOVERNANCE
+- Policies
+- Audit
+
+IMPROVEMENT
+- Failure Patterns
+- Recommendations
+
+SETTINGS
+- API Keys
+- Profile
+- Team / Users
+
+Do not put everything in one page.
+
+==================================================
+2. OVERVIEW
+==================================================
+
+Build a real observability overview dashboard.
+
+Top KPI cards:
+- Total Runs
+- Success Rate
+- Average Latency
+- Total Tokens
+- Estimated Cost
+- Reliability Score
+
+Use real data from the existing repository/database.
+Never fabricate metrics.
+
+Charts:
+- Run volume over time
+- Latency P50/P95/P99
+- Success/failure rate
+- Token usage
+- Evaluation score trends
+
+Evaluation summary:
+- Goal Completion
+- Constraint Adherence
+- Tool Reliability
+- Decision Consistency
+- Policy/Safety
+- Progress Evaluation
+
+Recent runs table with:
+Run ID
+Agent
+Project
+Status
+Duration
+Tokens
+Risk
+Score
+Started
+
+==================================================
+3. RUNS / TRACES
+==================================================
+
+Replace current narrow run-detail layout with a full trace explorer.
+
+Runs table:
+- Search
+- Agent filter
+- Project filter
+- Status filter
+- Evaluation filter
+- Time range filter
+
+Columns:
+Run ID
+Agent
+Task
+Started
+Duration
+Tokens
+Status
+Risk
+Reliability Score
+
+Clicking a run must open a full-page Run Detail.
+
+Run Detail tabs:
+Overview
+Trace
+Evaluations
+Latency
+Tokens
+Reliability
+Recovery
+Audit
+Metadata
+
+Display hierarchical spans:
+
+Agent Run
+  ├─ Planning
+  ├─ Tool Call
+  ├─ Evaluation
+  ├─ Decision
+  └─ Recovery
+
+Each span should show:
+input
+output
+latency
+tokens
+model
+tool
+evaluation
+risk
+policy
+metadata
+
+==================================================
+4. LATENCY PAGE
+==================================================
+
+Create dedicated latency monitoring.
+
+Charts:
+- P50
+- P95
+- P99
+- average
+
+Breakdowns:
+- by agent
+- by project
+- by tool
+- by model
+
+Use actual run/span timing data.
+
+==================================================
+5. TOKENS & COST
+==================================================
+
+Create dedicated token monitoring.
+
+Metrics:
+- input tokens
+- output tokens
+- total tokens
+- estimated cost
+
+Charts:
+- tokens over time
+- token usage by agent
+- token usage by model
+- token usage by project
+
+If token/cost metadata is unavailable, display N/A rather than fake data.
+
+==================================================
+6. EVALUATIONS
+==================================================
+
+Create dedicated Evaluation pages.
+
+Six sections:
+1. Goal Completion
+2. Constraint Adherence
+3. Tool Reliability
+4. Decision Consistency
+5. Policy/Safety
+6. Progress Evaluation
+
+Each evaluation metric must have:
+- current score
+- trend graph
+- pass count
+- fail count
+- recent failures
+- evidence
+- linked runs
+
+Clicking a failed evaluation must navigate to the relevant run and evidence.
+
+==================================================
+7. RISK / CONFIDENCE
+==================================================
+
+Create dedicated monitoring for:
+- dynamic risk
+- confidence
+- uncertainty
+- decisions
+
+Show:
+risk distribution
+confidence distribution
+risk over time
+high-risk runs
+low-confidence decisions
+
+==================================================
+8. RECOVERY CENTER
+==================================================
+
+Create a dedicated recovery workspace.
+
+Show:
+- recovery attempts
+- successful recoveries
+- rollbacks
+- retries
+- replans
+- human interventions
+- replay sessions
+
+Visualize:
+Violation
+→ Root Cause
+→ Decision
+→ Retry/Replan/Human/Rollback/Stop
+→ Recovery
+
+Use existing recovery implementation.
+
+==================================================
+9. TOOLS
+==================================================
+
+Create a dedicated Tool Monitoring page.
+
+Metrics:
+- calls
+- success rate
+- failures
+- average latency
+- P95 latency
+- reliability
+
+Show alternative/fallback tool configuration.
+
+Use existing ToolProfile and alternative recovery functionality.
+
+==================================================
+10. AGENT BEHAVIOR
+==================================================
+
+Create dedicated Agent Behavior page.
+
+For each agent show:
+- behavior fingerprint
+- historical baseline
+- current behavior
+- tool-call changes
+- step-count changes
+- anomaly status
+
+Use existing behavior fingerprint implementation.
+
+==================================================
+11. AUDIT
+==================================================
+
+Create dedicated audit timeline.
+
+Columns:
+timestamp
+actor
+event
+resource
+hash
+previous hash
+status
+
+Add:
+VERIFY INTEGRITY
+
+Display:
+chain valid / chain invalid
+events verified
+last hash
+
+Use the existing SHA-256 hash-chain audit implementation.
+
+==================================================
+12. POLICY MANAGEMENT
+==================================================
+
+Create professional policy-management UI.
+
+Display:
+policy name
+version
+status
+created by
+created at
+
+Allow:
+create
+edit
+activate
+deactivate
+version
+
+Preserve old policy versions for historical runs.
+
+==================================================
+13. MULTI-USER AUTHENTICATION
+==================================================
+
+Implement real authentication.
+
+Required screens:
+- Sign Up
+- Login
+- Logout
+- Forgot Password
+- Profile
+- Session management
+
+Users must have isolated data.
+
+Database:
+users
+sessions
+api_keys
+projects
+agents
+
+Every run and every resource must have a user/workspace/project ownership boundary.
+
+User A must never be able to retrieve User B's:
+- runs
+- traces
+- evaluations
+- policies
+- audit logs
+- API keys
+- agents
+
+Enforce isolation at API/database query level, not only frontend filtering.
+
+==================================================
+14. API KEY SYSTEM
+==================================================
+
+Create:
+Settings → API Keys
+
+Features:
+- Create API Key
+- Rename key
+- Copy key once
+- Revoke key
+- Rotate key
+- Show creation date
+- Show last-used date
+- Show status
+
+Never store raw API keys in PostgreSQL.
+
+Store only a secure hash and safe metadata.
+
+API authentication:
+Authorization: Bearer <API_KEY>
+
+or equivalent SDK authentication mechanism.
+
+==================================================
+15. SDK INTEGRATION
+==================================================
+
+Modify the AgentGuard Python SDK so users can connect their local agent
+to their AgentGuard account.
+
+Preferred usage:
+
+from agentguard import AgentGuard
+
+guard = AgentGuard(
+    api_key=os.getenv("AGENTGUARD_API_KEY"),
+    project="production"
+)
+
+@guard.monitor
+def my_agent():
+    ...
+
+Also support:
+
+guard = AgentGuard()
+
+where AGENTGUARD_API_KEY is automatically loaded from the environment.
+
+The SDK must send:
+- authenticated user/project identity
+- agent name
+- run data
+- spans
+- evaluation results
+- tool calls
+- token metadata when available
+- latency metadata
+- recovery/intervention events
+
+Do NOT expose AgentGuard private credentials in frontend JavaScript.
+API keys belong to server-side agent code/environment.
+
+==================================================
+16. PROJECTS
+==================================================
+
+Add project/workspace concept.
+
+Example:
+Workspace
+  ├─ Production
+  ├─ Development
+  └─ Experiments
+
+Runs belong to projects.
+
+Allow filtering all dashboard metrics by:
+- workspace
+- project
+- agent
+- time range
+
+==================================================
+17. DESIGN SYSTEM
+==================================================
+
+The UI must NOT resemble the current screenshot.
+
+Requirements:
+- professional enterprise SaaS
+- persistent sidebar
+- compact top navigation
+- clean typography
+- consistent spacing
+- responsive desktop layout
+- high information density without clutter
+- charts
+- tables
+- filters
+- drill-down navigation
+- useful empty states
+- loading states
+- error states
+- breadcrumbs
+- consistent status badges
+
+Avoid:
+- chatbot UI
+- AI-generated sounding copy
+- excessive gradients
+- giant empty whitespace
+- giant rounded cards
+- unnecessary illustrations
+- marketing copy inside operational screens
+- single giant table containing unrelated information
+
+Copy style must be neutral and technical.
+
+Examples:
+GOOD:
+"Constraint Adherence"
+"Evaluation Failed"
+"Latency P95"
+"Policy Version"
+"Run ID"
+
+BAD:
+"AI Insights"
+"Intelligent Magic"
+"Your AI Is Thinking"
+"Smart Recommendations"
+
+==================================================
+18. RESPONSIVE BEHAVIOR
+==================================================
+
+Desktop is primary.
+
+Support:
+1440px
+1280px
+1024px
+
+Sidebar may collapse.
+
+Charts and tables must remain usable.
+
+==================================================
+19. BACKEND REQUIREMENTS
+==================================================
+
+Do not replace the existing AgentGuard architecture unnecessarily.
+
+Reuse existing:
+- Run repository
+- Evaluation engine
+- Decision Engine
+- Risk Engine
+- Root Cause
+- Recovery
+- Audit chain
+- Replay
+- Tool Profiles
+- Behavior Fingerprinting
+- Policies
+
+Add only the authentication/multi-user/project boundaries required.
+
+==================================================
+20. TESTING
+==================================================
+
+Write tests for:
+
+Authentication:
+- signup
+- login
+- logout
+- invalid credentials
+- session expiration
+
+Authorization:
+- User A cannot access User B runs
+- User A cannot access User B API keys
+- User A cannot access User B policies
+
+API keys:
+- create
+- authenticate SDK
+- revoke
+- rotate
+- invalid key rejected
+
+Dashboard:
+- overview loads
+- run list loads
+- run detail loads
+- evaluation pages load
+- latency charts load
+- token charts load
+- audit loads
+- recovery loads
+
+Use Playwright for real browser testing.
+
+Test a full flow:
+
+signup
+→ login
+→ create project
+→ create API key
+→ run agent with SDK
+→ run appears in dashboard
+→ open trace
+→ view latency
+→ view token usage
+→ inspect evaluations
+→ inspect recovery
+→ inspect audit
+
+==================================================
+21. DATA INTEGRITY
+==================================================
+
+No mock dashboard numbers in production mode.
+
+All charts must derive from actual repository/database data.
+
+If no data:
+display:
+"No data available for this time range."
+
+==================================================
+22. FINAL ACCEPTANCE
+==================================================
+
+The resulting product should feel like a real observability platform.
+
+The first screen after login must be the Overview dashboard.
+
+A user should be able to go from:
+
+Overview
+→ Runs
+→ Trace
+→ Evaluation
+→ Root Cause
+→ Recovery
+→ Audit
+
+without leaving the platform.
+
+The SDK integration must work using the API key generated by the
+logged-in user's AgentGuard account.
+
+Run the complete existing regression suite.
+
+Do not break Phase 1–4 functionality.
+
+Add:
+docs/DASHBOARD_V2_REPORT.md
+
+The report must contain:
+- architecture changes
+- database/schema changes
+- authentication flow
+- API key flow
+- dashboard sections
+- API endpoints
+- tests executed
+- browser test evidence
+- security/authorization tests
+- regression results
+- known limitations
+
+Do not mark the task complete until the dashboard is actually tested in a real browser.

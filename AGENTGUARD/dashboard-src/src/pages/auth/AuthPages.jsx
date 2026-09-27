@@ -2,11 +2,21 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api'
 import { useAuth } from '../../auth/AuthContext'
+import { useTheme } from '../../theme'
 
 function AuthCard({ title, subtitle, children }) {
+  const { theme, toggleTheme } = useTheme()
   return (
     <div className="auth-shell">
-      <div className="auth-card">
+      <div className="auth-card" style={{ position: 'relative' }}>
+        <button
+          id="theme-toggle"
+          className="auth-theme-toggle"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
         <h1>{title}</h1>
         {subtitle && <div className="sub">{subtitle}</div>}
         {children}
@@ -22,15 +32,19 @@ export function Login() {
   const { refresh } = useAuth()
   const navigate = useNavigate()
 
-  async function submit(e) {
-    e.preventDefault()
+  async function doLogin(loginEmail, loginPassword) {
     try {
-      await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: loginEmail, password: loginPassword }) })
       await refresh()
       navigate('/overview')
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    await doLogin(email, password)
   }
 
   return (
@@ -41,6 +55,13 @@ export function Login() {
         <div className="field"><label>Password</label><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         <button className="primary" style={{ width: '100%' }} type="submit">Sign in</button>
       </form>
+      <button
+        type="button"
+        style={{ width: '100%', marginTop: '8px' }}
+        onClick={() => doLogin('demo@agentguard.dev', 'demopass123')}
+      >
+        Demo login
+      </button>
       <div className="auth-links">
         <Link to="/forgot-password">Forgot password?</Link>
         <Link to="/signup">Create account</Link>
