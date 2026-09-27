@@ -1,7 +1,7 @@
 """Feature-category library for the Skills Generator. Each category
 maps onto something this repo's evaluation platform already does (no
 new concept invented here) — metric-backed categories (rag/safety/
-agentic) render their body from `metrics_catalog.DEEPEVAL_CATALOG`'s
+agentic/other) render their body from `metrics_catalog.DEEPEVAL_CATALOG`'s
 real descriptions, so a future new catalog metric is available here
 with zero duplication. `agentguard.evaluation.metrics_catalog` itself
 has no top-level `deepeval` import, so importing it here does not
@@ -15,7 +15,14 @@ from typing import Literal
 
 from ..evaluation.metrics_catalog import DEEPEVAL_CATALOG
 
-FeatureCategoryKey = Literal["rag", "safety", "agentic", "hitl", "trajectory", "benchmarking"]
+FeatureCategoryKey = Literal["rag", "safety", "agentic", "other", "hitl", "trajectory", "benchmarking"]
+
+_GENERIC_METRIC_VERIFY = (
+    "POST the suite to /api/v2/suites, then POST /api/v2/eval-runs against a real "
+    "completed run's id. GET the eval-run and confirm each selected metric shows a "
+    "real numeric score (not available=false) — an unregistered or misconfigured "
+    "metric shows up there explicitly, never silently."
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class FeatureCategory:
     description: str
     metric_keys: tuple[str, ...]
     render_body: Callable[[tuple[str, ...]], str]
+    verify: str
 
 
 def _metric_lines(selected: tuple[str, ...]) -> str:
@@ -92,9 +100,7 @@ def _render_metric_category(label: str, selected: tuple[str, ...]) -> str:
         # empty so compose_skill omits the section entirely, instead of a
         # dead "(No specific metrics selected...)" stub.
         return ""
-    return f"""## {label} (selected)
-
-This project will be scored on:
+    return f"""This project will be scored on:
 {_metric_lines(selected)}
 
 Register a suite:
@@ -108,9 +114,7 @@ Register a suite:
 
 
 def _render_hitl(_selected: tuple[str, ...]) -> str:
-    return """## Human-in-the-loop approval
-
-For any action that should require a human sign-off before proceeding
+    return """For any action that should require a human sign-off before proceeding
 (e.g. spending above a budget, sending an email, deleting data), use
 `agentguard.perform_action` inside your agent function:
 
@@ -131,9 +135,7 @@ should degrade gracefully instead of crashing.
 
 
 def _render_trajectory(_selected: tuple[str, ...]) -> str:
-    return """## Agent trajectory evaluation
-
-To catch an agent calling the same tool redundantly, failing to recover
+    return """To catch an agent calling the same tool redundantly, failing to recover
 from an error, or taking an abnormal number of steps compared to its
 own history, register the deterministic trajectory evaluator:
 
@@ -143,18 +145,15 @@ own history, register the deterministic trajectory evaluator:
         SuiteMetric(evaluator="trajectory", threshold=0.7),
     ])
     # POST this to /api/v2/suites, then POST /api/v2/eval-runs against a
-    # real completed run's id to see duplicate-tool-call, missing-recovery,
-    # and step-count-anomaly findings.
+    # real completed run's id.
 """
 
 
 def _render_benchmarking(_selected: tuple[str, ...]) -> str:
-    return """## Model benchmarking
-
-To compare this agent's behavior across multiple LLM models on the same
+    return """To compare this agent's behavior across multiple LLM models on the same
 evaluation suite and get a recommendation for the cheapest/fastest/
 highest-quality model within a budget, use ModelBenchmarkEngine once you
-have an evaluation suite defined (see the sections above):
+have an evaluation suite defined (see the steps above):
 
     from agentguard.evaluation.benchmark import ModelBenchmarkEngine
     # See docs/FEATURE_MANUAL.md section 29 for the full wiring example.
@@ -170,6 +169,7 @@ FEATURE_CATEGORIES: dict[str, FeatureCategory] = {
             "deepeval.contextual_recall", "deepeval.contextual_relevancy", "deepeval.hallucination",
         ),
         render_body=lambda selected: _render_metric_category("RAG evaluation", selected),
+        verify=_GENERIC_METRIC_VERIFY,
     ),
     "safety": FeatureCategory(
         key="safety", label="Safety checks",
@@ -179,12 +179,14 @@ FEATURE_CATEGORIES: dict[str, FeatureCategory] = {
             "deepeval.misuse", "deepeval.pii_leakage", "deepeval.role_violation",
         ),
         render_body=lambda selected: _render_metric_category("Safety checks", selected),
+        verify=_GENERIC_METRIC_VERIFY,
     ),
     "agentic": FeatureCategory(
         key="agentic", label="Agentic / tool-use evaluation",
         description="Correct tool calls, correct arguments, and task completion checks.",
         metric_keys=("deepeval.tool_correctness", "deepeval.argument_correctness", "deepeval.task_completion"),
         render_body=lambda selected: _render_metric_category("Agentic / tool-use evaluation", selected),
+        verify=_GENERIC_METRIC_VERIFY,
     ),
     "other": FeatureCategory(
         key="other", label="Other checks",
@@ -194,23 +196,36 @@ FEATURE_CATEGORIES: dict[str, FeatureCategory] = {
             "deepeval.prompt_alignment", "deepeval.geval",
         ),
         render_body=lambda selected: _render_metric_category("Other checks", selected),
+        verify=_GENERIC_METRIC_VERIFY,
     ),
     "hitl": FeatureCategory(
         key="hitl", label="Human-in-the-loop approval",
         description="Block a risky action on a real human decision, with a deterministic timeout.",
         metric_keys=(),
         render_body=_render_hitl,
+        verify=(
+            "Trigger the risky action. Confirm a pending human decision appears "
+            "(GET /api/runs/{run_id}/human-decisions), resolve it via "
+            "POST /api/runs/{run_id}/human-decision, and confirm the run's final "
+            "status matches what you approved/rejected."
+        ),
     ),
     "trajectory": FeatureCategory(
         key="trajectory", label="Agent trajectory evaluation",
         description="Deterministic checks for duplicate tool calls, missing recovery, and step-count anomalies.",
         metric_keys=(),
         render_body=_render_trajectory,
+        verify=(
+            "POST the suite, POST an eval-run against a real completed run's id, "
+            "and confirm the eval-run's result includes a trajectory score (not "
+            "available=false)."
+        ),
     ),
     "benchmarking": FeatureCategory(
         key="benchmarking", label="Model benchmarking",
         description="Compare this agent across multiple LLM models on the same evaluation suite.",
         metric_keys=(),
         render_body=_render_benchmarking,
+        verify="Run the benchmark across at least two models and confirm GET /api/v2/benchmarks/{id} shows a result row per model.",
     ),
 }

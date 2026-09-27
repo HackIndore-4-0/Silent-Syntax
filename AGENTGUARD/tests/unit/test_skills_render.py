@@ -60,7 +60,8 @@ class TestComposeSkill:
 
     def test_no_categories_selected_still_produces_a_valid_skill(self):
         markdown = compose_skill(_request(selected_categories=()))
-        assert "## 3." in markdown  # framework body section present
+        assert "### Step 3:" in markdown  # framework body step present
+        assert "**Verify:**" in markdown
         assert "RAG evaluation" not in markdown  # no category sections
 
     def test_selected_category_section_appears_with_only_its_selected_metrics(self):
