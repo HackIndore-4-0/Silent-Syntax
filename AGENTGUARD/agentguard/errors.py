@@ -55,10 +55,33 @@ class HumanRejected(Exception):
     (or the request times out and the policy's timeout behavior is
     'deny', which is the only Phase 2 timeout behavior)."""
 
-    def __init__(self, action: str, reason: str = "") -> None:
+    def __init__(
+        self,
+        action: str,
+        reason: str = "",
+        *,
+        evidence: dict[str, Any] | None = None,
+        code_file: str | None = None,
+        code_function: str | None = None,
+        code_lineno: int | None = None,
+    ) -> None:
         super().__init__(f"human rejected action {action!r}: {reason}")
         self.action = action
         self.reason = reason
+        self.evidence = evidence or {}
+        """The originally proposed action parameters (e.g. a price that
+        broke the budget) -- the same dict passed to
+        perform_action_with_result(action, **evidence). Carried through so
+        the STOP decision this rejection produces (decorator.py) can show
+        WHY the action was rejected, not just that it was."""
+        self.code_file = code_file
+        self.code_function = code_function
+        self.code_lineno = code_lineno
+        """The exact line in the AGENT'S OWN code that called
+        perform_action()/perform_action_with_result() with the rejected
+        proposal (captured via agentguard.tracing.recording._find_call_site,
+        same helper CircuitBreakerTripped uses) -- lets the STOP decision
+        point at a real line, not just a rule name."""
 
 
 class HumanReplanRequested(ReplanRequested):

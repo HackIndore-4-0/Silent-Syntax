@@ -58,8 +58,32 @@ function TabContent({ tab, runId, run, onRunUpdate }) {
   }
 }
 
+// Evidence keys that just repeat what's already shown elsewhere in the
+// Why panel (the action name, the human's own free-text reason, and the
+// three code-location fields rendered together as one "Code location"
+// row) — kept out of the generic key/value dump below so it doesn't
+// double up.
+const WHY_EVIDENCE_SKIP_KEYS = new Set(['action', 'reason', 'code_file', 'code_function', 'code_lineno'])
+
 function OverviewTab({ run }) {
   const decisions = run.decisions || []
+  const humanDecisions = run.human_decisions || []
+  const lastDecision = decisions.length ? decisions[decisions.length - 1] : null
+  const lastHuman = humanDecisions.length ? humanDecisions[humanDecisions.length - 1] : null
+  // Evidence attached to the STOP decision itself (e.g. a forbidden
+  // action or circuit breaker trip) — a fallback for when a run stopped
+  // WITHOUT ever going through a human approval request.
+  const decisionEvidence = lastDecision?.evidence || {}
+  const decisionEvidenceEntries = Object.entries(decisionEvidence).filter(([k]) => !WHY_EVIDENCE_SKIP_KEYS.has(k))
+  // The exact line in the AGENT'S OWN code that proposed the rejected
+  // action — same code_file/code_function/code_lineno convention
+  // CircuitBreakerTripped's evidence already uses, so a run stopped by a
+  // human points at a real line to go fix, not just "rejected".
+  const codeLocation = decisionEvidence.code_file
+    ? `${decisionEvidence.code_file}:${decisionEvidence.code_lineno} (${decisionEvidence.code_function})`
+    : null
+  const showWhy = lastHuman || decisionEvidenceEntries.length > 0 || codeLocation
+
   return (
     <div className="grid-2">
       <Panel header="Summary">
@@ -77,6 +101,31 @@ function OverviewTab({ run }) {
           <KvRow label={<Badge status={d.outcome} />} key={i}>{d.reason}</KvRow>
         )) : <EmptyState>No decisions recorded.</EmptyState>}
       </Panel>
+      {showWhy && (
+        <Panel header="Why">
+          {lastHuman ? (
+            <>
+              <KvRow label="Proposed action"><span className="mono">{lastHuman.action}</span></KvRow>
+              {Object.entries(lastHuman.evidence || {}).map(([k, v]) => (
+                <KvRow label={k} key={k}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</KvRow>
+              ))}
+              <KvRow label="Human decision">
+                <Badge status={lastHuman.status} />{lastHuman.resolved_by ? ` — ${lastHuman.resolved_by}` : ''}
+              </KvRow>
+              {lastHuman.modified_evidence && (
+                <KvRow label="Modified to"><span className="mono">{JSON.stringify(lastHuman.modified_evidence)}</span></KvRow>
+              )}
+            </>
+          ) : (
+            decisionEvidenceEntries.map(([k, v]) => (
+              <KvRow label={k} key={k}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</KvRow>
+            ))
+          )}
+          {codeLocation && (
+            <KvRow label="Code location"><span className="mono">{codeLocation}</span></KvRow>
+          )}
+        </Panel>
+      )}
       <Panel header="Code Version">
         {run.git_commit_sha ? (
           <>

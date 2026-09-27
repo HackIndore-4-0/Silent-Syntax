@@ -7,6 +7,7 @@ from agentguard.skills.render import (
     SkillRequest,
     UnknownCategoryError,
     UnknownFrameworkError,
+    UnknownJudgeModelError,
     compose_skill,
     list_skill_options,
 )
@@ -32,6 +33,17 @@ class TestComposeSkill:
         assert "proj-123" in markdown
         assert "http://127.0.0.1:8000" in markdown
 
+    def test_install_instructions_use_git_clone_not_pypi(self):
+        """Regression test: agentguard is NOT published on PyPI (verified
+        directly: https://pypi.org/pypi/agentguard/json -> 404) -- a
+        "pip install agentguard" instruction would fail for anyone who
+        actually followed it. The real distribution mechanism today is
+        cloning the source repo and installing it editable."""
+        markdown = compose_skill(_request())
+        assert "pip install agentguard" not in markdown
+        assert "git clone" in markdown
+        assert "pip install -e ." in markdown
+
     def test_api_key_is_always_the_placeholder_never_a_real_secret(self):
         markdown = compose_skill(_request())
         assert "${AGENTGUARD_API_KEY}" in markdown
@@ -48,7 +60,8 @@ class TestComposeSkill:
 
     def test_no_categories_selected_still_produces_a_valid_skill(self):
         markdown = compose_skill(_request(selected_categories=()))
-        assert "## 2." in markdown  # framework body section present
+        assert "### Step 3:" in markdown  # framework body step present
+        assert "**Verify:**" in markdown
         assert "RAG evaluation" not in markdown  # no category sections
 
     def test_selected_category_section_appears_with_only_its_selected_metrics(self):
@@ -75,6 +88,24 @@ class TestComposeSkill:
         markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
         assert "This project will be scored on" not in markdown
 
+    def test_a_category_checked_with_zero_selected_metrics_is_omitted_entirely(self):
+        markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
+        assert "RAG evaluation" not in markdown
+
+    def test_function_reference_section_is_always_included(self):
+        """The generated Skill should be a complete-enough reference that
+        the coding agent doesn't need to guess at AgentGuard's API --
+        every major function/decorator gets a one-line usage example,
+        regardless of which categories were selected."""
+        markdown = compose_skill(_request(selected_categories=()))
+        assert "## AgentGuard function reference" in markdown
+        for symbol in [
+            "perform_action(", "perform_action_with_result(", "request_approval(",
+            "update_state(", "get_state(", "reset_state(", "record_tokens(",
+            "wait_for_background_tasks(", "traced_acompletion(", "wrap_llm_client(",
+        ]:
+            assert symbol in markdown, f"missing reference for {symbol}"
+
     def test_framework_body_is_included_for_each_framework(self):
         for framework_key, expected_snippet in [
             ("plain_python", "@guard.monitor(policy=Policy("),
@@ -83,6 +114,23 @@ class TestComposeSkill:
         ]:
             markdown = compose_skill(_request(framework=framework_key))
             assert expected_snippet in markdown
+
+    def test_a_project_name_containing_a_later_token_is_not_rescanned(self):
+        """Regression test: chained .replace() calls rescan the WHOLE
+        string after each substitution. If project_name itself contains
+        the literal text "__JUDGE_MODEL__" (an edge case, but project
+        names are freely settable by any workspace member via
+        POST /api/projects), the later .replace("__JUDGE_MODEL__", ...)
+        call would substitute inside what was just inserted as the
+        project name -- corrupting it. Substitution must happen in a
+        single pass so an already-substituted value is never rescanned."""
+        markdown = compose_skill(_request(
+            project_name="acme __JUDGE_MODEL__ corp",
+            selected_categories=("rag",),
+            selected_metrics={"rag": ("deepeval.faithfulness",)},
+            judge_model="gpt-4.1",
+        ))
+        assert "acme __JUDGE_MODEL__ corp" in markdown
 
     def test_project_name_with_braces_does_not_break_rendering(self):
         """Substitution is plain .replace(), so a project name containing
@@ -104,10 +152,20 @@ class TestComposeSkill:
         markdown = compose_skill(_request(
             selected_categories=("safety",),
             selected_metrics={"safety": ("deepeval.bias",)},
-            judge_model="claude-sonnet-5",
+            judge_model="gpt-4.1",
         ))
-        assert "claude-sonnet-5" in markdown
-        assert 'default_model="claude-sonnet-5"' in markdown
+        assert "gpt-4.1" in markdown
+        assert 'default_model="gpt-4.1"' in markdown
+
+    def test_unknown_judge_model_raises(self):
+        """judge_model isn't free text -- it must be one of
+        JUDGE_MODEL_OPTIONS, same 'explicit gap, never a silent skip'
+        rule as UnknownFrameworkError/UnknownCategoryError. Otherwise an
+        arbitrary string is spliced verbatim into a Python string literal
+        in the generated code (a value containing '\"' would produce
+        syntactically broken output)."""
+        with pytest.raises(UnknownJudgeModelError):
+            compose_skill(_request(judge_model="not-a-real-model"))
 
 
 class TestListSkillOptions:
@@ -118,7 +176,7 @@ class TestListSkillOptions:
     def test_returns_all_six_categories_with_their_metrics(self):
         options = list_skill_options()
         by_key = {c["key"]: c for c in options["categories"]}
-        assert set(by_key) == {"rag", "safety", "agentic", "hitl", "trajectory", "benchmarking"}
+        assert set(by_key) == {"rag", "safety", "agentic", "other", "hitl", "trajectory", "benchmarking"}
         assert {m["key"] for m in by_key["rag"]["metrics"]} == {
             "deepeval.answer_relevancy", "deepeval.faithfulness", "deepeval.contextual_precision",
             "deepeval.contextual_recall", "deepeval.contextual_relevancy", "deepeval.hallucination",
@@ -126,9 +184,14 @@ class TestListSkillOptions:
         assert by_key["hitl"]["metrics"] == []
 
     def test_returns_judge_model_options(self):
+        """Only models DeepEval's default OpenAI-model resolution can
+        actually use -- an Anthropic model name here would silently be
+        routed to OpenAI (no Anthropic wrapper exists anywhere in
+        agentguard/evaluation/), so it's excluded rather than offered as
+        a judge model that doesn't work."""
         options = list_skill_options()
         keys = {m["key"] for m in options["judge_models"]}
-        assert keys == {"gpt-4o-mini", "gpt-4.1", "claude-sonnet-5"}
+        assert keys == {"gpt-4o-mini", "gpt-4.1", "gpt-4o"}
 
     def test_no_top_level_deepeval_import(self):
         import ast

@@ -1,12 +1,13 @@
-"""A LangGraph flight-booking agent that misbehaves on purpose — it tells
-the user it will book a flight under a stated budget, then tries to book
-one over it. Rather than silently letting that through (or silently
-auto-STOPping it), this version routes the over-budget booking through
-AgentGuard's REAL human-in-the-loop primitive (`perform_action`, the same
-one the dashboard's WebSocket approval UI uses) — but resolved from a
-plain terminal prompt, no UI at all: you are asked, right there in the
-terminal, "approve or reject?", and your answer decides whether the
-booking proceeds or the run stops.
+"""A LangGraph flight-booking agent that always proposes its cheapest
+available option (see examples/_flight_selection.py) -- but in this
+demo, every flight on offer genuinely exceeds the stated budget, so even
+the honest, best-effort pick is over. Rather than silently booking it
+anyway (or silently auto-STOPping), this version routes that proposal
+through AgentGuard's REAL human-in-the-loop primitive (`perform_action`,
+the same one the dashboard's WebSocket approval UI uses) — but resolved
+from a plain terminal prompt, no UI at all: you are asked, right there
+in the terminal, "approve or reject?", and your answer decides whether
+the booking proceeds or the run stops.
 
 Note even an APPROVED booking still gets flagged afterward: AgentGuard's
 deterministic ConstraintAdherenceEvaluator independently checks the
@@ -40,6 +41,11 @@ from agentguard.storage.memory import InMemoryRunRepository
 from agentguard.tracing import traceable
 from langgraph.graph import END, START, StateGraph
 
+try:
+    from _flight_selection import select_flight  # `python examples/flight_booking_agent.py`
+except ImportError:
+    from examples._flight_selection import select_flight  # `import examples.flight_booking_agent`
+
 _database_url = os.environ.get("AGENTGUARD_DATABASE_URL")
 if _database_url:
     from agentguard.storage.postgres import PostgresRunRepository
@@ -70,10 +76,13 @@ class FlightState(TypedDict):
 @traceable
 async def search_flights(state: FlightState) -> FlightState:
     print(f"[agent] Searching flights under Rs.{state['budget']:.0f}...")
+    # Every option here genuinely exceeds BUDGET_LIMIT -- this demo's
+    # point is AgentGuard catching a real, unavoidable budget overage,
+    # not a bug where the agent picks a worse option than it had to.
     options = [
-        {"flight": "6E-204 IndiGo", "price": 8_500},
-        {"flight": "SG-118 SpiceJet", "price": 9_200},
-        {"flight": "AI-202 Air India", "price": 12_000},
+        {"flight": "6E-204 IndiGo", "price": 10_500},
+        {"flight": "SG-118 SpiceJet", "price": 11_200},
+        {"flight": "AI-202 Air India", "price": 13_000},
     ]
     print("[agent] Found: " + ", ".join(f"{o['flight']} (Rs.{o['price']})" for o in options))
     return {**state, "options": options}
@@ -121,16 +130,17 @@ async def _await_terminal_approval(queue: "asyncio.Queue") -> None:
 
 @traceable
 async def book_flight(state: FlightState) -> FlightState:
-    """The misbehaving step: picks the MOST EXPENSIVE option regardless
-    of the stated budget — the reverse of what the agent just promised.
-    A real agent bug looks exactly like this: the plan/response text
-    says one thing, the actual side-effecting action does another.
+    """Proposes the cheapest option that fits the budget -- or, if none
+    do (every option in this demo's search_flights() is over budget), the
+    cheapest option overall, so the human is asked to approve the BEST
+    available deal rather than an arbitrary one.
 
-    Unlike a silent violation, this one is gated on a live human
-    decision via AgentGuard's `perform_action` before it's allowed to
-    "complete" — see HUMAN_APPROVAL_ACTION in `Policy.require_approval`.
+    A genuinely-over-budget proposal is never booked silently: it's
+    gated on a live human decision via AgentGuard's `perform_action`
+    before it's allowed to "complete" — see HUMAN_APPROVAL_ACTION in
+    `Policy.require_approval`.
     """
-    chosen = max(state["options"], key=lambda o: o["price"])
+    chosen = select_flight(state["options"], state["budget"])
     over_budget = chosen["price"] > state["budget"]
     print(f"[agent] Wants to book {chosen['flight']} for Rs.{chosen['price']}"
           + (" -- this is OVER the stated budget!" if over_budget else "..."))
@@ -236,9 +246,8 @@ def print_intervention(run: dict) -> None:
         print("  You rejected the booking -- AgentGuard recorded this as a")
         print("  controlled STOP (a guardrail rejection), not a crash.")
     else:
-        print("  The agent SAID it would book under budget, then tried to book")
-        print("  over it anyway. AgentGuard caught the gap between what it")
-        print("  SAID and what it DID, instead of letting it pass silently.")
+        print("  No human approval was needed -- the agent's cheapest option")
+        print("  already fit the stated budget, so it booked it directly.")
     print("=" * width)
 
 

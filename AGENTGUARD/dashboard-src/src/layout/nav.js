@@ -21,6 +21,7 @@ export const NAV = [
   { group: 'Settings', items: [
     ['settings/api-keys', 'API Keys', 'KeyRound'], ['settings/profile', 'Profile', 'UserRound'], ['settings/team', 'Team / Users', 'Users'],
   ] },
+  { group: 'Skills', items: [['skills', 'Skills', 'Terminal']] },
 ]
 
 // Which NAV group (if any) owns the current route — drives which

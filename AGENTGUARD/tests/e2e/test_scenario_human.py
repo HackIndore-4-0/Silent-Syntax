@@ -81,6 +81,100 @@ async def test_human_rejects_payment_and_run_stops(fake_repository):
     assert "payment" in decisions[-1].reason
 
 
+async def test_human_rejection_decision_carries_the_proposed_action_parameters(fake_repository):
+    """Regression test: before this fix, the STOP decision's evidence on a
+    human rejection was just {"action", "reason"} -- the actual proposed
+    numbers (e.g. a price that broke the budget) were discarded between
+    perform_action_with_result()'s evidence kwargs and the raised
+    HumanRejected, leaving the dashboard with no way to show WHY the
+    rejected action was over policy."""
+    run_id_holder: dict = {}
+
+    @monitor(policy=Policy(max_cost=10000, require_approval=["book_over_budget_flight"]), llm_judge=False)
+    async def flight_agent(task: str) -> dict:
+        run_id_holder["run_id"] = agentguard.context.current_run().run.id
+        await agentguard.perform_action_with_result(
+            "book_over_budget_flight", flight="AI-202 Air India", price=12000, budget=10000
+        )
+        return {"booked": True}
+
+    resolver = asyncio.create_task(_resolve_soon(run_id_holder, "rejected"))
+    with pytest.raises(HumanRejected):
+        await flight_agent("book a flight under 10000")
+    await resolver
+
+    run = next(iter(fake_repository.runs.values()))
+    decisions = fake_repository.decisions[run.id]
+    assert decisions[-1].outcome == RunStatus.STOP
+    assert decisions[-1].evidence["price"] == 12000
+    assert decisions[-1].evidence["budget"] == 10000
+    assert decisions[-1].evidence["flight"] == "AI-202 Air India"
+
+
+async def test_human_rejection_still_runs_evaluators_without_overriding_the_stop(fake_repository):
+    """Regression test: before this fix, a rejected/blocked run skipped
+    the evaluator + reliability pipeline entirely (it only ran on the
+    clean success path), so ConstraintAdherenceEvaluator never got a
+    chance to independently confirm the violation -- the Evaluations and
+    Reliability dashboard tabs stayed empty for exactly the runs where a
+    human needs the most context. Evaluators must still run, but must not
+    let the evaluator-driven DecisionEngine overwrite the STOP a human
+    already made."""
+    run_id_holder: dict = {}
+
+    @monitor(policy=Policy(max_cost=10000, require_approval=["book_over_budget_flight"]), llm_judge=False)
+    async def flight_agent(task: str) -> dict:
+        run_id_holder["run_id"] = agentguard.context.current_run().run.id
+        await agentguard.perform_action_with_result(
+            "book_over_budget_flight", flight="AI-202 Air India", price=12000, budget=10000
+        )
+        return {"booked": True}
+
+    resolver = asyncio.create_task(_resolve_soon(run_id_holder, "rejected"))
+    with pytest.raises(HumanRejected):
+        await flight_agent("book a flight under 10000")
+    await resolver
+
+    run = next(iter(fake_repository.runs.values()))
+    assert run.status == RunStatus.STOP  # the human's rejection, not overwritten
+
+    evaluations = fake_repository.evaluations[run.id]
+    assert any(e.evaluator == "constraint_adherence" for e in evaluations)
+
+    decisions = fake_repository.decisions[run.id]
+    assert len(decisions) == 1  # no second decision appended by the evaluator pipeline
+
+
+async def test_human_rejection_decision_points_at_the_agent_code_that_proposed_it(fake_repository):
+    """Regression test: before this fix, a STOP decision from a human
+    rejection said WHAT was rejected (the action name) and, after the
+    evidence fix above, the numbers -- but never WHERE in the agent's own
+    code the rejected proposal came from, leaving "where do I even go fix
+    this" unanswered. code_file/code_function/code_lineno mirror the same
+    fields CircuitBreakerTripped already exposes for the same reason."""
+    run_id_holder: dict = {}
+
+    @monitor(policy=Policy(max_cost=10000, require_approval=["book_over_budget_flight"]), llm_judge=False)
+    async def flight_agent(task: str) -> dict:
+        run_id_holder["run_id"] = agentguard.context.current_run().run.id
+        await agentguard.perform_action_with_result(
+            "book_over_budget_flight", flight="AI-202 Air India", price=12000, budget=10000
+        )
+        return {"booked": True}
+
+    resolver = asyncio.create_task(_resolve_soon(run_id_holder, "rejected"))
+    with pytest.raises(HumanRejected):
+        await flight_agent("book a flight under 10000")
+    await resolver
+
+    run = next(iter(fake_repository.runs.values()))
+    decisions = fake_repository.decisions[run.id]
+    evidence = decisions[-1].evidence
+    assert evidence["code_file"].endswith("test_scenario_human.py")
+    assert evidence["code_function"] == "flight_agent"
+    assert isinstance(evidence["code_lineno"], int)
+
+
 async def test_human_approval_times_out_and_denies(fake_repository):
     @monitor(
         policy=Policy(max_cost=60000, require_approval=["payment"], human_timeout_s=0.05),

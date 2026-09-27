@@ -46,6 +46,7 @@ from agentguard.skills import (
     SkillRequest,
     UnknownCategoryError,
     UnknownFrameworkError,
+    UnknownJudgeModelError,
     compose_skill,
     list_skill_options,
 )
@@ -1039,6 +1040,7 @@ class SkillGenerateRequestV2(BaseModel):
     framework: str
     categories: list[str] = []
     metrics: dict[str, list[str]] = {}
+    judge_model: str = "gpt-4o-mini"
 
 
 @router.post("/skills/generate")
@@ -1055,9 +1057,10 @@ async def generate_skill_v2(body: SkillGenerateRequestV2, workspace_id: str = De
         framework=body.framework,
         selected_categories=tuple(body.categories),
         selected_metrics={k: tuple(v) for k, v in body.metrics.items()},
+        judge_model=body.judge_model,
     )
     try:
         markdown = compose_skill(request)
-    except (UnknownFrameworkError, UnknownCategoryError) as exc:
+    except (UnknownFrameworkError, UnknownCategoryError, UnknownJudgeModelError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"markdown": markdown}

@@ -10,6 +10,7 @@ would misread as placeholders).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .features import FEATURE_CATEGORIES
@@ -25,6 +26,12 @@ class UnknownFrameworkError(Exception):
 class UnknownCategoryError(Exception):
     def __init__(self, key: str) -> None:
         super().__init__(f"unknown feature category key: {key!r}")
+        self.key = key
+
+
+class UnknownJudgeModelError(Exception):
+    def __init__(self, key: str) -> None:
+        super().__init__(f"unknown judge model key: {key!r}")
         self.key = key
 
 
@@ -44,48 +51,139 @@ JUDGE_MODEL_OPTIONS = (
      "note": "Best for everyday RAG/safety checks where per-run cost matters more than maximum judge accuracy."},
     {"key": "gpt-4.1", "label": "gpt-4.1 — balanced",
      "note": "Noticeably more accurate judging than gpt-4o-mini at moderate extra cost; a good default for safety-critical categories."},
-    {"key": "claude-sonnet-5", "label": "claude-sonnet-5 — highest accuracy",
+    {"key": "gpt-4o", "label": "gpt-4o — highest accuracy",
      "note": "Use when judge accuracy matters more than cost, e.g. compliance-sensitive safety metrics or final pre-release evaluation."},
 )
+# Only OpenAI model names: DeepEval's default model resolution (used
+# whenever a metric's `model=` is a bare string, which is what
+# build_suite_evaluator_registry's default_model becomes) treats any
+# string as an OpenAI model — there is no Anthropic/other-provider
+# wrapper anywhere in agentguard/evaluation/, confirmed empirically
+# (a bare "claude-sonnet-5" string raises OpenAI's own "API key not
+# configured" error rather than calling Anthropic). Offering a
+# non-OpenAI name here would produce a Skill that looks right and fails.
+_JUDGE_MODEL_KEYS = frozenset(m["key"] for m in JUDGE_MODEL_OPTIONS)
 
 
 _HEADER_TEMPLATE = """# Integrate AgentGuard into this project
 
 Project: __PROJECT_NAME__ (project_id: __PROJECT_ID__)
 API URL: __API_BASE_URL__
-Install: pip install agentguard
 
-## 1. Set environment variables
-
-    AGENTGUARD_API_KEY=${AGENTGUARD_API_KEY}
-    AGENTGUARD_DATABASE_URL=${AGENTGUARD_DATABASE_URL}
+Follow the numbered steps below IN ORDER. Each one ends with a
+**Verify:** line — confirm it before moving to the next step. Do not
+skip a Verify and continue if it doesn't check out; fix the step
+first.
 """
 
-_JUDGE_MODEL_TEMPLATE = """## Recommended judge model: __JUDGE_MODEL__
+_INSTALL_STEP_BODY = """AgentGuard is not published on PyPI yet — install it directly from source:
 
-Evaluation metrics need a judge LLM to score outputs. __JUDGE_MODEL__ was
+    git clone https://github.com/HackIndore-4-0/Silent-Syntax.git
+    cd Silent-Syntax/AGENTGUARD
+    pip install -e .
+"""
+_INSTALL_STEP_VERIFY = (
+    'Run `python -c "import agentguard; print(agentguard.__version__)"` — '
+    "it must print a version number, not an ImportError."
+)
+
+_ENV_STEP_BODY = """    AGENTGUARD_API_KEY=${AGENTGUARD_API_KEY}
+    AGENTGUARD_DATABASE_URL=${AGENTGUARD_DATABASE_URL}
+"""
+_ENV_STEP_VERIFY = (
+    "Confirm both variables are set in the shell that will run your agent "
+    "(`echo $AGENTGUARD_API_KEY` on macOS/Linux/bash, `echo $env:AGENTGUARD_API_KEY` "
+    "on PowerShell) — neither should print empty. These only persist for the "
+    "current shell session unless exported permanently."
+)
+
+_JUDGE_MODEL_STEP_BODY = """Evaluation metrics need a judge LLM to score outputs. __JUDGE_MODEL__ was
 selected for this Skill; pass it as the registry's default so every
-selected metric below uses it unless a metric overrides it:
+selected metric uses it unless a metric overrides it:
 
     from agentguard.evaluation import build_suite_evaluator_registry
     evaluators = build_suite_evaluator_registry(suite, repository=repository, default_model="__JUDGE_MODEL__")
 """
+_JUDGE_MODEL_STEP_VERIFY = (
+    "Call build_suite_evaluator_registry(...) for the suite you're about to build "
+    "in the next step(s) and confirm it doesn't raise MissingMetricConfigError — "
+    "if it does, that metric's config needs reviewing (see its TODO comment)."
+)
 
-_FOOTER = """
-## Verify
+_FUNCTION_REFERENCE = """## AgentGuard function reference
 
-Run your agent once. Check __API_BASE_URL__/#/runs for the new Run.
+Beyond `@monitor`, these are the functions available inside a monitored
+run (call them from anywhere in your agent's code while it's executing
+under `@guard.monitor`):
+
+    import agentguard
+
+    # State snapshots -- recorded on the dashboard's Run timeline.
+    agentguard.update_state(**kwargs)      # merge kwargs into the run's current state
+    agentguard.get_state()                 # read the current state back
+    agentguard.reset_state()               # clear it
+
+    # Real token/cost usage (Tokens & Cost dashboard page) -- only call
+    # with numbers you actually have, never an estimate.
+    agentguard.record_tokens(model_name="gpt-4o-mini", input_tokens=120, output_tokens=45, cost_usd=0.0009)
+
+    # Policy-gated actions -- runs the forbidden/require_approval checks
+    # from your Policy before letting the action proceed.
+    finding = await agentguard.perform_action("some_action", **evidence)
+    # ...or, to also read back a reviewer's edited parameters on approval:
+    result = await agentguard.perform_action_with_result("some_action", **evidence)
+
+    # Low-level human approval primitive (perform_action calls this for
+    # you when an action is in Policy.require_approval -- call it
+    # directly only if you need to ask for approval outside that check):
+    decision = await agentguard.request_approval("some_action", reason="why this needs a human")
+
+    # Blocks until any fire-and-forget background trace writes finish --
+    # call at the very end of a script/test so nothing is lost on exit.
+    await agentguard.wait_for_background_tasks()
+
+    # Drop-in replacements for litellm.acompletion/.completion that
+    # automatically record an "llm_call" trace step (model, tokens, cost):
+    from agentguard.tracing import traced_acompletion, traced_completion
+    response = await traced_acompletion(model="gpt-4o-mini", messages=[...])
+
+    # Wraps ANY LLM client object (OpenAI, Anthropic, etc.) so every
+    # call through it is traced the same way, when you can't switch to
+    # traced_acompletion directly:
+    from agentguard.tracing import wrap_llm_client
+    client = wrap_llm_client(your_openai_or_anthropic_client)
 """
+
+_DONE_FOOTER = """---
+
+You're done. Every step above carried its own **Verify:** — if all of
+them passed, the integration is complete.
+"""
+
+
+def _step_block(index: int, title: str, body: str, verify: str) -> str:
+    return f"### Step {index}: {title}\n\n{body}\n**Verify:** {verify}\n"
 
 
 def compose_skill(request: SkillRequest) -> str:
     framework = FRAMEWORK_TEMPLATES.get(request.framework)
     if framework is None:
         raise UnknownFrameworkError(request.framework)
+    if request.judge_model not in _JUDGE_MODEL_KEYS:
+        raise UnknownJudgeModelError(request.judge_model)
 
-    sections = [_HEADER_TEMPLATE, framework.body]
+    # Each step is (title, body, verify) -- numbered sequentially below,
+    # so a variable number of selected categories still produces clean
+    # "Step 1, 2, 3, ..." numbering rather than gaps or hardcoded numbers
+    # baked into static template text.
+    steps: list[tuple[str, str, str]] = [
+        ("Install AgentGuard", _INSTALL_STEP_BODY, _INSTALL_STEP_VERIFY),
+        ("Set environment variables", _ENV_STEP_BODY, _ENV_STEP_VERIFY),
+        (framework.step_title, framework.body, framework.verify),
+    ]
+
     if request.selected_categories:
-        sections.append(_JUDGE_MODEL_TEMPLATE)
+        steps.append(("Configure the judge model", _JUDGE_MODEL_STEP_BODY, _JUDGE_MODEL_STEP_VERIFY))
 
     for category_key in request.selected_categories:
         category = FEATURE_CATEGORIES.get(category_key)
@@ -96,18 +194,29 @@ def compose_skill(request: SkillRequest) -> str:
         # request (a metric that's real but belongs to a different
         # category) never leaks into the wrong section.
         valid_selected = tuple(m for m in requested if m in category.metric_keys)
-        sections.append(category.render_body(valid_selected))
+        body = category.render_body(valid_selected)
+        if body:  # a metric category checked with nothing selected renders "" -- omit it entirely
+            steps.append((category.label, body, category.verify))
 
-    sections.append(_FOOTER)
+    step_blocks = [_step_block(i, title, body, verify) for i, (title, body, verify) in enumerate(steps, start=1)]
+    sections = [_HEADER_TEMPLATE, *step_blocks, _FUNCTION_REFERENCE, _DONE_FOOTER]
 
     markdown = "\n".join(sections)
-    return (
-        markdown
-        .replace("__PROJECT_NAME__", request.project_name)
-        .replace("__PROJECT_ID__", request.project_id)
-        .replace("__API_BASE_URL__", request.api_base_url)
-        .replace("__JUDGE_MODEL__", request.judge_model)
-    )
+    # A single-pass substitution: chained .replace() calls rescan the
+    # WHOLE string after each call, so a substituted value (e.g. a
+    # project name containing the literal text "__JUDGE_MODEL__" --
+    # project names are freely settable via POST /api/projects) would
+    # get corrupted by a LATER .replace() call matching inside what was
+    # just inserted. re.sub with a single combined pattern never rescans
+    # its own replacement text.
+    token_values = {
+        "__PROJECT_NAME__": request.project_name,
+        "__PROJECT_ID__": request.project_id,
+        "__API_BASE_URL__": request.api_base_url,
+        "__JUDGE_MODEL__": request.judge_model,
+    }
+    pattern = re.compile("|".join(re.escape(token) for token in token_values))
+    return pattern.sub(lambda m: token_values[m.group(0)], markdown)
 
 
 def list_skill_options() -> dict:
