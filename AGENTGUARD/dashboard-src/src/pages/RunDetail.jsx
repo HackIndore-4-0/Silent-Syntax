@@ -77,6 +77,28 @@ function OverviewTab({ run }) {
           <KvRow label={<Badge status={d.outcome} />} key={i}>{d.reason}</KvRow>
         )) : <EmptyState>No decisions recorded.</EmptyState>}
       </Panel>
+      <Panel header="Code Version">
+        {run.git_commit_sha ? (
+          <>
+            <KvRow label="Commit"><span className="mono">{run.git_commit_sha.slice(0, 12)}</span></KvRow>
+            <KvRow label="Branch">{run.git_branch || '—'}</KvRow>
+            <KvRow label="Working tree">
+              {run.git_dirty
+                ? <span style={{ color: 'var(--warn)' }}>dirty (uncommitted changes)</span>
+                : <span style={{ color: 'var(--ok)' }}>clean</span>}
+            </KvRow>
+            {run.git_remote && <KvRow label="Remote"><span className="mono">{run.git_remote}</span></KvRow>}
+          </>
+        ) : (
+          <EmptyState>Not captured — the calling application's working directory wasn't a git repo.</EmptyState>
+        )}
+        {run.dependency_lockfile_hash && (
+          <KvRow label="Dependencies">
+            <span className="mono">{run.dependency_lockfile_path} ({run.dependency_lockfile_hash.slice(0, 12)})</span>
+          </KvRow>
+        )}
+        <KvRow label="AgentGuard SDK">{run.sdk_version || '—'}</KvRow>
+      </Panel>
     </div>
   )
 }

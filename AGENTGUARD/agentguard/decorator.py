@@ -73,8 +73,10 @@ from .evaluators.rule_based import ConstraintAdherenceEvaluator
 from .models import AgentState, ModelAlternative, Policy, Run, RunStatus
 from .otel.instrumentation import start_agent_span, start_decision_span
 from .policy.engine import PolicyEngine
+from ._version import __version__
 from .recovery.seed import pop_recovery_seed
 from .reliability.engine import ReliabilityEngine
+from .versioning import get_dependency_snapshot, get_git_metadata
 from ._runtime import get_repository
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -217,6 +219,13 @@ async def _execute(
         agent = await resolve_agent(repository, workspace_id=workspace_id, project_id=project_id, agent_name=agent_name)
         agent_id = agent.id
 
+    # Best-effort, cached-per-process (see agentguard/versioning.py) —
+    # answers "what code produced this run?" without any caller
+    # configuration. Reads the CALLING application's own git repo/lockfile
+    # (cwd), never agentguard's own.
+    git_metadata = get_git_metadata()
+    dependency_snapshot = get_dependency_snapshot()
+
     run = Run(
         agent_name=agent_name,
         task=_task_from_args(args),
@@ -228,6 +237,13 @@ async def _execute(
         workspace_id=workspace_id,
         project_id=project_id,
         agent_id=agent_id,
+        git_commit_sha=git_metadata.commit_sha if git_metadata else None,
+        git_branch=git_metadata.branch if git_metadata else None,
+        git_dirty=git_metadata.dirty if git_metadata else None,
+        git_remote=git_metadata.remote if git_metadata else None,
+        dependency_lockfile_hash=dependency_snapshot.lockfile_hash if dependency_snapshot else None,
+        dependency_lockfile_path=dependency_snapshot.lockfile_path if dependency_snapshot else None,
+        sdk_version=__version__,
     )
 
     ctx = RunContext(run=run, state=initial_state)

@@ -439,6 +439,30 @@ class Run(BaseModel):
     rather than fabricating a number (Rule: "If token/cost metadata is
     unavailable, display N/A rather than fake data")."""
 
+    # Code-version tracking (reproducibility) -------------------------------
+    git_commit_sha: str | None = None
+    git_branch: str | None = None
+    git_dirty: bool | None = None
+    git_remote: str | None = None
+    """Captured automatically from the CALLING application's own git repo
+    (agentguard/versioning.py) at run-creation time — never agentguard's
+    own repo. All None when the working directory isn't inside a git repo
+    (or git isn't installed) — capture is best-effort, never fabricated
+    and never a reason to fail the run. Unlike agent_version (a manual,
+    caller-supplied label), this is derived, not typed by hand."""
+
+    dependency_lockfile_hash: str | None = None
+    dependency_lockfile_path: str | None = None
+    """SHA-256 of the first recognized dependency lockfile found in the
+    calling application's working directory (uv.lock, poetry.lock,
+    requirements.txt, package-lock.json, ...). None when no known
+    lockfile is present."""
+
+    sdk_version: str | None = None
+    """agentguard.__version__ at the time this run executed — lets a run
+    be pinned to a specific SDK release independent of the calling app's
+    own git commit."""
+
     @property
     def duration_ms(self) -> float | None:
         if self.finished_at is None:

@@ -158,9 +158,11 @@ class PostgresRunRepository(RunRepository):
                  initial_state, final_state, exception_type, exception_message,
                  trace_id, span_id, retry_count, replan_count, actions,
                  parent_run_id, recovery_checkpoint_id, agent_version,
-                 workspace_id, project_id, agent_id)
+                 workspace_id, project_id, agent_id,
+                 git_commit_sha, git_branch, git_dirty, git_remote,
+                 dependency_lockfile_hash, dependency_lockfile_path, sdk_version)
             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb,
-                    $16, $17, $18, $19, $20, $21)
+                    $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
             """,
             run.id,
             run.agent_name,
@@ -183,6 +185,13 @@ class PostgresRunRepository(RunRepository):
             run.workspace_id,
             run.project_id,
             run.agent_id,
+            run.git_commit_sha,
+            run.git_branch,
+            run.git_dirty,
+            run.git_remote,
+            run.dependency_lockfile_hash,
+            run.dependency_lockfile_path,
+            run.sdk_version,
         )
         await self.save_policy(run, run.policy)
 

@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from ._version import __version__
 from . import errors
 from ._runtime import configure
 from .client import AgentGuard, AuthenticationError
@@ -86,5 +87,3 @@ __all__ = [
     "wait_for_background_tasks",
     "errors",
 ]
-
-__version__ = "0.2.0"
