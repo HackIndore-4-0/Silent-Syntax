@@ -225,7 +225,17 @@ async def request_approval(
         return resolved
     if resolved.status == "replan":
         raise HumanReplanRequested(action, resolved.reason)
-    raise HumanRejected(action, resolved.reason or f"status={resolved.status}")
+    from .tracing.recording import _find_call_site
+
+    code_file, code_function, code_lineno = _find_call_site()
+    raise HumanRejected(
+        action,
+        resolved.reason or f"status={resolved.status}",
+        evidence=request.evidence,
+        code_file=code_file,
+        code_function=code_function,
+        code_lineno=code_lineno,
+    )
 
 
 @dataclass

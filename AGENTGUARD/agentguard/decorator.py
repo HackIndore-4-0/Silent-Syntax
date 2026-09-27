@@ -355,7 +355,14 @@ async def _execute(
             if isinstance(attempt_error, HumanRejected):
                 decision = decision_engine.stop(
                     reason=f"human rejected action {attempt_error.action!r}: {attempt_error.reason}",
-                    evidence={"action": attempt_error.action, "reason": attempt_error.reason},
+                    evidence={
+                        "action": attempt_error.action,
+                        "reason": attempt_error.reason,
+                        **attempt_error.evidence,
+                        "code_file": attempt_error.code_file,
+                        "code_function": attempt_error.code_function,
+                        "code_lineno": attempt_error.code_lineno,
+                    },
                 )
                 await _save_decision(decision)
                 run.status = RunStatus.STOP
@@ -506,9 +513,13 @@ async def _execute(
             run.exception_type = type(error).__name__
             run.exception_message = str(error)
             await repository.update_run(run)
-        elif terminal_exc is not None:
-            await repository.update_run(run)
         else:
+            # Evaluators + reliability run whether the agent finished
+            # cleanly or was stopped by a human/guardrail (terminal_exc)
+            # -- a rejected/blocked run is exactly the case where the
+            # dashboard's Evaluations/Reliability tabs matter most, and
+            # `run.final_state` (set above, unconditionally) is already
+            # there for them to check regardless of how the run ended.
             eval_results = [evaluator.evaluate(run) for evaluator in evaluators]
             for eval_result in eval_results:
                 await repository.save_evaluation(run, eval_result)
@@ -541,17 +552,24 @@ async def _execute(
                 await repository.save_root_cause(run.id, reliability.root_cause)
                 ctx.record_event("ROOT_CAUSE", reliability.root_cause.model_dump())
 
-            decision_engine.begin_evaluation()
-            decision = decision_engine.decide(
-                eval_results, policy_findings=policy_findings, reliability=reliability, policy=policy
-            )
-            decision.retry_count = ctx.retry_count
-            decision.replan_count = ctx.replan_count
-            run.status = decision.outcome
-            await repository.update_run(run)
-            await _save_decision(decision)
-            with start_decision_span(run, decision):
-                pass
+            if terminal_exc is not None:
+                # A human/guardrail decision (STOP) was already made and
+                # saved at the point terminal_exc was raised, above -- the
+                # evaluator-driven DecisionEngine must not re-decide and
+                # overwrite that outcome with its own.
+                await repository.update_run(run)
+            else:
+                decision_engine.begin_evaluation()
+                decision = decision_engine.decide(
+                    eval_results, policy_findings=policy_findings, reliability=reliability, policy=policy
+                )
+                decision.retry_count = ctx.retry_count
+                decision.replan_count = ctx.replan_count
+                run.status = decision.outcome
+                await repository.update_run(run)
+                await _save_decision(decision)
+                with start_decision_span(run, decision):
+                    pass
 
             if decision.outcome == RunStatus.HUMAN:
                 await _register_pending_human_review(run, decision, reliability, repository)
