@@ -70,29 +70,45 @@ _HEADER_TEMPLATE = """# Integrate AgentGuard into this project
 Project: __PROJECT_NAME__ (project_id: __PROJECT_ID__)
 API URL: __API_BASE_URL__
 
-## 1. Install AgentGuard
+Follow the numbered steps below IN ORDER. Each one ends with a
+**Verify:** line — confirm it before moving to the next step. Do not
+skip a Verify and continue if it doesn't check out; fix the step
+first.
+"""
 
-AgentGuard is not published on PyPI yet — install it directly from source:
+_INSTALL_STEP_BODY = """AgentGuard is not published on PyPI yet — install it directly from source:
 
     git clone https://github.com/HackIndore-4-0/Silent-Syntax.git
     cd Silent-Syntax/AGENTGUARD
     pip install -e .
+"""
+_INSTALL_STEP_VERIFY = (
+    'Run `python -c "import agentguard; print(agentguard.__version__)"` — '
+    "it must print a version number, not an ImportError."
+)
 
-## 2. Set environment variables
-
-    AGENTGUARD_API_KEY=${AGENTGUARD_API_KEY}
+_ENV_STEP_BODY = """    AGENTGUARD_API_KEY=${AGENTGUARD_API_KEY}
     AGENTGUARD_DATABASE_URL=${AGENTGUARD_DATABASE_URL}
 """
+_ENV_STEP_VERIFY = (
+    "Confirm both variables are set in the shell that will run your agent "
+    "(`echo $AGENTGUARD_API_KEY` on macOS/Linux/bash, `echo $env:AGENTGUARD_API_KEY` "
+    "on PowerShell) — neither should print empty. These only persist for the "
+    "current shell session unless exported permanently."
+)
 
-_JUDGE_MODEL_TEMPLATE = """## Recommended judge model: __JUDGE_MODEL__
-
-Evaluation metrics need a judge LLM to score outputs. __JUDGE_MODEL__ was
+_JUDGE_MODEL_STEP_BODY = """Evaluation metrics need a judge LLM to score outputs. __JUDGE_MODEL__ was
 selected for this Skill; pass it as the registry's default so every
-selected metric below uses it unless a metric overrides it:
+selected metric uses it unless a metric overrides it:
 
     from agentguard.evaluation import build_suite_evaluator_registry
     evaluators = build_suite_evaluator_registry(suite, repository=repository, default_model="__JUDGE_MODEL__")
 """
+_JUDGE_MODEL_STEP_VERIFY = (
+    "Call build_suite_evaluator_registry(...) for the suite you're about to build "
+    "in the next step(s) and confirm it doesn't raise MissingMetricConfigError — "
+    "if it does, that metric's config needs reviewing (see its TODO comment)."
+)
 
 _FUNCTION_REFERENCE = """## AgentGuard function reference
 
@@ -138,11 +154,15 @@ under `@guard.monitor`):
     client = wrap_llm_client(your_openai_or_anthropic_client)
 """
 
-_FOOTER = """
-## Verify
+_DONE_FOOTER = """---
 
-Run your agent once. Check __API_BASE_URL__/#/runs for the new Run.
+You're done. Every step above carried its own **Verify:** — if all of
+them passed, the integration is complete.
 """
+
+
+def _step_block(index: int, title: str, body: str, verify: str) -> str:
+    return f"### Step {index}: {title}\n\n{body}\n**Verify:** {verify}\n"
 
 
 def compose_skill(request: SkillRequest) -> str:
@@ -152,9 +172,18 @@ def compose_skill(request: SkillRequest) -> str:
     if request.judge_model not in _JUDGE_MODEL_KEYS:
         raise UnknownJudgeModelError(request.judge_model)
 
-    sections = [_HEADER_TEMPLATE, framework.body, _FUNCTION_REFERENCE]
+    # Each step is (title, body, verify) -- numbered sequentially below,
+    # so a variable number of selected categories still produces clean
+    # "Step 1, 2, 3, ..." numbering rather than gaps or hardcoded numbers
+    # baked into static template text.
+    steps: list[tuple[str, str, str]] = [
+        ("Install AgentGuard", _INSTALL_STEP_BODY, _INSTALL_STEP_VERIFY),
+        ("Set environment variables", _ENV_STEP_BODY, _ENV_STEP_VERIFY),
+        (framework.step_title, framework.body, framework.verify),
+    ]
+
     if request.selected_categories:
-        sections.append(_JUDGE_MODEL_TEMPLATE)
+        steps.append(("Configure the judge model", _JUDGE_MODEL_STEP_BODY, _JUDGE_MODEL_STEP_VERIFY))
 
     for category_key in request.selected_categories:
         category = FEATURE_CATEGORIES.get(category_key)
@@ -167,9 +196,10 @@ def compose_skill(request: SkillRequest) -> str:
         valid_selected = tuple(m for m in requested if m in category.metric_keys)
         body = category.render_body(valid_selected)
         if body:  # a metric category checked with nothing selected renders "" -- omit it entirely
-            sections.append(body)
+            steps.append((category.label, body, category.verify))
 
-    sections.append(_FOOTER)
+    step_blocks = [_step_block(i, title, body, verify) for i, (title, body, verify) in enumerate(steps, start=1)]
+    sections = [_HEADER_TEMPLATE, *step_blocks, _FUNCTION_REFERENCE, _DONE_FOOTER]
 
     markdown = "\n".join(sections)
     # A single-pass substitution: chained .replace() calls rescan the
