@@ -12,6 +12,7 @@ dependency, not a dev-test dependency.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 import pytest
 
@@ -95,6 +96,33 @@ async def test_create_and_get_run(repo):
 
 async def test_get_run_returns_none_for_unknown_id(repo):
     assert await repo.get_run("does-not-exist") is None
+
+
+async def test_list_runs_includes_duration_and_token_fields(repo):
+    """Regression test: list_runs()'s hand-written SELECT used to omit
+    duration_ms (computed) and model_name/tokens_input/tokens_output/
+    estimated_cost_usd (real columns) entirely — present only in
+    get_run(). Every dashboard aggregate that reads list_runs() (Latency,
+    Tokens & Cost) silently saw None for every run as a result, no matter
+    how well-instrumented the agent was."""
+    run = Run(agent_name="a", policy=Policy(max_cost=60000))
+    await repo.create_run(run)
+
+    run.status = RunStatus.CONTINUE
+    run.finished_at = datetime.now(timezone.utc)
+    run.model_name = "gpt-4o-mini"
+    run.tokens_input = 100
+    run.tokens_output = 40
+    run.estimated_cost_usd = 0.0012
+    await repo.update_run(run)
+
+    [listed] = await repo.list_runs(limit=1)
+    assert listed["id"] == run.id
+    assert listed["duration_ms"] is not None and listed["duration_ms"] >= 0
+    assert listed["model_name"] == "gpt-4o-mini"
+    assert listed["tokens_input"] == 100
+    assert listed["tokens_output"] == 40
+    assert listed["estimated_cost_usd"] == 0.0012
 
 
 async def test_list_runs_orders_by_started_at_desc(repo):

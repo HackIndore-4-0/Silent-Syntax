@@ -51,12 +51,23 @@ def test_retry_and_duplicate_rate():
     assert profile.duplicate_call_rate == 0.2
 
 
-def test_insufficient_data_below_min_sample_size():
+def test_verdict_is_insufficient_data_below_min_sample_size_but_raw_rate_still_shown():
+    """RELIABLE/DEGRADED/UNRELIABLE is a trend claim that needs enough
+    samples to be honest — but a raw success_rate from however many
+    calls actually happened is a real fact, not a fabricated statistic,
+    so it's reported even below MIN_SAMPLE_SIZE (unlike the verdict)."""
     events = [_event() for _ in range(MIN_SAMPLE_SIZE - 1)]
     profile = build_tool_profile("search_api", events)
     assert profile.reliability == "INSUFFICIENT_DATA"
-    assert profile.success_rate is None
+    assert profile.success_rate == 1.0
     assert profile.sample_count == MIN_SAMPLE_SIZE - 1
+
+
+def test_no_events_at_all_reports_no_rate_either():
+    profile = build_tool_profile("search_api", [])
+    assert profile.reliability == "INSUFFICIENT_DATA"
+    assert profile.success_rate is None
+    assert profile.sample_count == 0
 
 
 def test_reliable_and_unreliable_thresholds():

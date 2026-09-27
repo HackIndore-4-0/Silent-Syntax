@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import gsap from 'gsap'
 import { api } from '../api'
+import { staggerInUp } from '../animations'
 
 export function Badge({ status }) {
   return <span className={`badge ${status}`}>{status}</span>
@@ -48,19 +50,61 @@ export function ErrorState({ error }) {
   return <div className="error-state">{error?.message || String(error)}</div>
 }
 
-export function EmptyState({ children = 'No data available for this time range.' }) {
+export function EmptyState({ title, children = 'No data available for this time range.' }) {
+  if (title) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-title">{title}</div>
+        <div className="empty-state-sub">{children}</div>
+      </div>
+    )
+  }
   return <div className="empty-state">{children}</div>
 }
 
-export function KpiRow({ items }) {
+function KpiCard({ label, value, na, highlight }) {
+  const valueRef = useRef(null)
+  const prevValue = useRef(value)
+  const isFirst = useRef(true)
+
+  useEffect(() => {
+    if (isFirst.current) {
+      isFirst.current = false
+      prevValue.current = value
+      return
+    }
+    if (prevValue.current !== value && valueRef.current) {
+      gsap.fromTo(
+        valueRef.current,
+        { opacity: 0.35, y: 3 },
+        { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }
+      )
+    }
+    prevValue.current = value
+  }, [value])
+
   return (
-    <div className="kpi-row">
-      {items.map(({ label, value, na }) => (
-        <div className="kpi-card" key={label}>
-          <div className="kpi-label">{label}</div>
-          <div className={`kpi-value ${na ? 'na' : ''}`}>{value}</div>
-        </div>
-      ))}
+    <div className={`kpi-card${highlight ? ' highlight' : ''}`}>
+      <div className="kpi-label">{label}</div>
+      <div ref={valueRef} className={`kpi-value ${na ? 'na' : ''}`}>{value}</div>
+    </div>
+  )
+}
+
+export function KpiRow({ items }) {
+  const rowRef = useRef(null)
+
+  useEffect(() => {
+    if (!rowRef.current) return
+    const cards = rowRef.current.querySelectorAll('.kpi-card')
+    const tween = staggerInUp(cards)
+    return () => tween.kill()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <div className="kpi-row" ref={rowRef}>
+      {items.map((item) => <KpiCard key={item.label} {...item} />)}
     </div>
   )
 }

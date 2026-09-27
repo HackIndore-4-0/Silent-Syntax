@@ -228,19 +228,21 @@ async def request_approval(
     raise HumanRejected(action, resolved.reason or f"status={resolved.status}")
 
 
-async def perform_action(action: str, **evidence: Any) -> PolicyFinding | None:
-    """Declare that the agent is about to take `action`.
+@dataclass
+class ActionResult:
+    """Full outcome of `perform_action_with_result()` — unlike
+    `perform_action()`, this doesn't discard the resolved human decision,
+    so a caller can read back a reviewer's `modified_evidence` (e.g. a
+    counter-price) and resume with THOSE values instead of the original
+    proposal."""
 
-    1. Runs the synchronous, local, deterministic policy guardrail
-       (Policy.forbidden_actions) — raises ForbiddenActionError
-       immediately if forbidden, with no I/O involved.
-    2. If the action is listed in Policy.require_approval, blocks (async,
-       with a deterministic timeout) on a live human decision via
-       `request_approval()`.
+    finding: PolicyFinding | None
+    human_decision: HumanDecision | None = None
+    """Set only when `action` required approval — None means the action
+    was unrestricted and proceeded immediately."""
 
-    Returns the PolicyFinding produced by the synchronous check (None if
-    the action is unrestricted).
-    """
+
+async def _perform_action_impl(action: str, evidence: dict[str, Any]) -> ActionResult:
     ctx = _require_context()
     from .errors import ForbiddenActionError
     from .policy.engine import PolicyEngine
@@ -261,10 +263,35 @@ async def perform_action(action: str, **evidence: Any) -> PolicyFinding | None:
     )
     ctx.actions.append({"action": action, "evidence": evidence, "requires_approval": finding is not None})
 
+    human_decision = None
     if finding is not None:
-        await request_approval(action, finding=finding, evidence=evidence)
+        human_decision = await request_approval(action, finding=finding, evidence=evidence)
 
-    return finding
+    return ActionResult(finding=finding, human_decision=human_decision)
+
+
+async def perform_action(action: str, **evidence: Any) -> PolicyFinding | None:
+    """Declare that the agent is about to take `action`.
+
+    1. Runs the synchronous, local, deterministic policy guardrail
+       (Policy.forbidden_actions) — raises ForbiddenActionError
+       immediately if forbidden, with no I/O involved.
+    2. If the action is listed in Policy.require_approval, blocks (async,
+       with a deterministic timeout) on a live human decision via
+       `request_approval()`.
+
+    Returns the PolicyFinding produced by the synchronous check (None if
+    the action is unrestricted). Use `perform_action_with_result()`
+    instead if the caller needs to read back a reviewer's
+    `modified_evidence`."""
+    return (await _perform_action_impl(action, evidence)).finding
+
+
+async def perform_action_with_result(action: str, **evidence: Any) -> ActionResult:
+    """Same policy-check + approval flow as `perform_action()`, but
+    returns the full resolution (including any `modified_evidence` a
+    reviewer supplied) instead of discarding it."""
+    return await _perform_action_impl(action, evidence)
 
 
 async def _invoke_tool(fn: Any, args: tuple, kwargs: dict) -> Any:

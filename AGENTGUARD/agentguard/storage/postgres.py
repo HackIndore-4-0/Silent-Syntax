@@ -343,12 +343,13 @@ class PostgresRunRepository(RunRepository):
             """
             INSERT INTO agentguard_human_decisions
                 (id, run_id, action, decision, risk_score, confidence, reason,
-                 evidence, status, timeout_s, requested_at, resolved_at, resolved_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)
+                 evidence, status, timeout_s, requested_at, resolved_at, resolved_by, modified_evidence)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14::jsonb)
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,
                 resolved_at = EXCLUDED.resolved_at,
-                resolved_by = EXCLUDED.resolved_by
+                resolved_by = EXCLUDED.resolved_by,
+                modified_evidence = EXCLUDED.modified_evidence
             """,
             human_decision.id,
             human_decision.run_id,
@@ -363,6 +364,7 @@ class PostgresRunRepository(RunRepository):
             human_decision.requested_at,
             human_decision.resolved_at,
             human_decision.resolved_by,
+            json.dumps(human_decision.modified_evidence, default=str) if human_decision.modified_evidence is not None else None,
         )
 
     async def set_run_status(self, run_id: str, status: Any) -> None:
@@ -544,6 +546,7 @@ class PostgresRunRepository(RunRepository):
             """
             SELECT r.id, r.agent_name, r.task, r.status, r.started_at, r.finished_at,
                    r.retry_count, r.replan_count, r.workspace_id, r.project_id,
+                   r.model_name, r.tokens_input, r.tokens_output, r.estimated_cost_usd,
                    p.max_cost,
                    d.outcome AS decision_outcome,
                    d.risk_score AS decision_risk_score,
@@ -567,7 +570,14 @@ class PostgresRunRepository(RunRepository):
             offset,
             workspace_id,
         )
-        return [dict(r) for r in rows]
+        # duration_ms/tokens/model/cost are otherwise only ever computed in
+        # get_run() (a single run) — every list_runs() caller (Latency,
+        # Tokens & Cost, ...) needs them too, since they read list_runs(),
+        # not get_run(), for aggregate views.
+        results = [dict(r) for r in rows]
+        for result in results:
+            result["duration_ms"] = _duration_ms(result.get("started_at"), result.get("finished_at"))
+        return results
 
     async def list_risk_assessments(self, run_id: str) -> list[dict[str, Any]]:
         pool = await self._get_pool()
@@ -619,12 +629,19 @@ class PostgresRunRepository(RunRepository):
         rows = await pool.fetch(
             """
             SELECT id, action, decision, risk_score, confidence, reason, evidence,
-                   status, timeout_s, requested_at, resolved_at, resolved_by
+                   status, timeout_s, requested_at, resolved_at, resolved_by, modified_evidence
             FROM agentguard_human_decisions WHERE run_id = $1 ORDER BY requested_at
             """,
             run_id,
         )
-        return [{**dict(r), "evidence": _decode_jsonb(dict(r)["evidence"])} for r in rows]
+        return [
+            {
+                **dict(r),
+                "evidence": _decode_jsonb(dict(r)["evidence"]),
+                "modified_evidence": _decode_jsonb(dict(r)["modified_evidence"]),
+            }
+            for r in rows
+        ]
 
     # -- Phase 4: tool calls / alternatives ---------------------------------
 

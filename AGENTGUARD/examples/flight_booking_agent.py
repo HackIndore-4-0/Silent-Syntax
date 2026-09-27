@@ -102,10 +102,21 @@ async def _await_terminal_approval(queue: "asyncio.Queue") -> None:
     for key, value in request.get("evidence", {}).items():
         print(f"  {key}:  {value}")
     print("!" * width)
-    answer = await asyncio.to_thread(input, "  Run it, or stop it? [run/stop]: ")
-    approved = answer.strip().lower() in ("run", "y", "yes", "approve", "approved")
-    get_broker().resolve(request["id"], "approved" if approved else "rejected", resolved_by="terminal-operator")
-    print(f"  -> you said: {'RUN IT (approved)' if approved else 'STOP IT (rejected)'}\n")
+    answer = await asyncio.to_thread(input, "  Run it, stop it, or modify it? [run/stop/modify <price>]: ")
+    lowered = answer.strip().lower()
+    if lowered.startswith("modify"):
+        parts = answer.strip().split(maxsplit=1)
+        new_price = float(parts[1]) if len(parts) > 1 else request["evidence"].get("price")
+        get_broker().resolve(
+            request["id"], "approved", resolved_by="terminal-operator", modified_evidence={"price": new_price}
+        )
+        print(f"  -> you said: MODIFY -> counter-offer Rs.{new_price:.0f}\n")
+    elif lowered in ("run", "y", "yes", "approve", "approved"):
+        get_broker().resolve(request["id"], "approved", resolved_by="terminal-operator")
+        print("  -> you said: RUN IT (approved)\n")
+    else:
+        get_broker().resolve(request["id"], "rejected", resolved_by="terminal-operator")
+        print("  -> you said: STOP IT (rejected)\n")
 
 
 @traceable
@@ -130,13 +141,19 @@ async def book_flight(state: FlightState) -> FlightState:
         queue = broker.subscribe(run_id)  # subscribe BEFORE perform_action, see docstring above
         watcher = asyncio.create_task(_await_terminal_approval(queue))
         try:
-            await agentguard.perform_action(
+            result = await agentguard.perform_action_with_result(
                 HUMAN_APPROVAL_ACTION, flight=chosen["flight"], price=chosen["price"], budget=state["budget"],
             )
         finally:
             watcher.cancel()
             broker.unsubscribe(run_id, queue)
-        print(f"[agent] Human approved it -- booking {chosen['flight']} for Rs.{chosen['price']} anyway.")
+
+        decision = result.human_decision
+        if decision is not None and decision.modified_evidence:
+            chosen = {**chosen, "price": decision.modified_evidence.get("price", chosen["price"])}
+            print(f"[agent] Human MODIFIED the terms -- booking {chosen['flight']} for Rs.{chosen['price']:.0f} instead.")
+        else:
+            print(f"[agent] Human approved it -- booking {chosen['flight']} for Rs.{chosen['price']} anyway.")
 
     return {**state, "booked": chosen}
 
@@ -160,6 +177,10 @@ _monitor_decorator = _guard.monitor if _guard is not None else monitor
 async def flight_booking_agent(query: str) -> dict:
     print(f"[agent] task: {query}")
     print(f"[agent] Understood - I will book a flight under Rs.{BUDGET_LIMIT}.")
+    # Baseline snapshot: gives RootCauseEngine a real "before" state to
+    # diff the booking outcome against, instead of a single flat snapshot
+    # it can't meaningfully explain a deviation from.
+    update_state(max_budget=BUDGET_LIMIT)
     result = await flight_graph.ainvoke({"query": query, "budget": BUDGET_LIMIT, "options": [], "booked": {}})
     booked = result["booked"]
     # Record what actually happened against the SAME field the Policy's
@@ -186,6 +207,8 @@ def print_intervention(run: dict) -> None:
     if human_decision is not None:
         print(f"  Human asked:   {human_decision['action']}")
         print(f"  Human said:    {human_decision['status'].upper()}  (by {human_decision.get('resolved_by')})")
+        if human_decision.get("modified_evidence"):
+            print(f"  Modified to:   {human_decision['modified_evidence']}")
         print("-" * width)
     if decision is None:
         print("  No decision recorded.")
@@ -201,7 +224,11 @@ def print_intervention(run: dict) -> None:
         print(f"  Policy limit:   Rs.{ev['expected']:.0f}  ({ev['policy_attr']})")
         print(f"  Actual spend:   Rs.{ev['observed']:.0f}  ({ev['field']})")
     print("-" * width)
-    if human_decision is not None and human_decision["status"] == "approved" and decision and decision["outcome"] != "continue":
+    if human_decision is not None and human_decision.get("modified_evidence") and decision and decision["outcome"] == "continue":
+        print("  You MODIFIED the proposed action instead of a bare approve/")
+        print("  reject -- the agent resumed with YOUR corrected values, and")
+        print("  this time the final spend is within policy.")
+    elif human_decision is not None and human_decision["status"] == "approved" and decision and decision["outcome"] != "continue":
         print("  You approved the ACTION, but AgentGuard's policy evaluator")
         print("  still flags the FINAL spend against your budget -- approval")
         print("  and post-hoc compliance are two independent, both-real checks.")
@@ -224,7 +251,7 @@ async def _fetch_latest_run() -> dict:
 async def main() -> None:
     try:
         booked_flight = await flight_booking_agent("Book me a flight under Rs.10,000")
-        print(f"[result] booked: {booked_flight['flight']} for Rs.{booked_flight['price']}")
+        print(f"[result] booked: {booked_flight['flight']} for Rs.{booked_flight['price']:.0f}")
     except HumanRejected as exc:
         print(f"[result] booking stopped -- a human rejected it: {exc.reason}")
 

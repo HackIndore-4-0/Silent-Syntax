@@ -41,7 +41,7 @@ from agentguard.replay import replay as replay_run
 from agentguard.evaluation.diagnose import diagnose_evaluation_failure
 from agentguard.evaluation.recommend import EvaluationRecommendationEngine
 from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND
-from agentguard.models import EvaluationSuite, Job, SuiteMetric
+from agentguard.models import EvaluationSuite, Job, SuiteMetric, ToolAlternative
 from pydantic import BaseModel
 
 from .auth import get_current_workspace_id
@@ -503,6 +503,14 @@ async def recovery_v2(workspace_id: str = Depends(get_current_workspace_id)):
     for r in runs:
         decisions = await repository.list_decisions(r["id"])
         outcomes = [d["outcome"] for d in decisions]
+        # perform_action()/request_approval() (the live in-function human
+        # review path) never saves a Decision(outcome="human") row — only
+        # the post-hoc low-confidence+high-impact escalation does. Without
+        # this, a run reviewed via that live path (e.g. rejected) is
+        # invisible here even though a real HumanDecision row exists.
+        human_decisions = await repository.list_human_decisions(r["id"])
+        if human_decisions and "human" not in outcomes:
+            outcomes.append("human")
         if not any(o in ("retry", "replan", "human", "rolled_back") for o in outcomes):
             continue
         root_cause = await repository.get_root_cause(r["id"])
@@ -542,6 +550,28 @@ async def tools_v2(workspace_id: str = Depends(get_current_workspace_id)):
     return {"tools": profiles, "alternatives": alternatives}
 
 
+class ToolAlternativeRequest(BaseModel):
+    primary: str
+    fallback: str
+    reliability_threshold: float = 0.8
+
+
+@router.post("/tools/alternatives")
+async def create_tool_alternative_v2(
+    body: ToolAlternativeRequest, workspace_id: str = Depends(get_current_workspace_id)
+):
+    """The only prior persistence path (legacy POST /api/tools/alternatives,
+    server/api.py) never set workspace_id, so it could never be seen by
+    this workspace-scoped /tools page — see AGENTGUARD.md's Tier 3 notes."""
+    repository = get_repository()
+    alt = ToolAlternative(
+        primary=body.primary, fallback=body.fallback,
+        reliability_threshold=body.reliability_threshold, workspace_id=workspace_id,
+    )
+    await repository.save_tool_alternative(alt)
+    return alt.model_dump()
+
+
 # -- LLM Gateway (Models) -----------------------------------------------------------------
 
 
@@ -570,7 +600,7 @@ async def agent_fingerprint_v2(
 ):
     repository = get_repository()
     engine = FingerprintEngine(repository)
-    fingerprint = await engine.fingerprint(agent_name, current_run_id=current_run_id)
+    fingerprint = await engine.fingerprint(agent_name, current_run_id=current_run_id, workspace_id=workspace_id)
     return fingerprint.model_dump()
 
 

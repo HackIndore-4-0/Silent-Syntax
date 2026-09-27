@@ -67,7 +67,11 @@ class ApprovalBroker:
     # -- resolving side: REST endpoint or WebSocket-relayed dashboard reply
 
     def resolve(
-        self, request_id: str, status: HumanOutcome, resolved_by: Optional[str] = None
+        self,
+        request_id: str,
+        status: HumanOutcome,
+        resolved_by: Optional[str] = None,
+        modified_evidence: Optional[dict] = None,
     ) -> Optional[HumanDecision]:
         """Thread-safe: the caller (a REST handler or a WebSocket
         connection) may be running on a different OS thread — and
@@ -78,6 +82,10 @@ class ApprovalBroker:
         safe; a bare `fut.set_result(...)` here is only well-defined when
         caller and awaiter happen to share a loop, which is not
         guaranteed once the API and the agent are different processes.
+
+        `modified_evidence`: a reviewer's corrected proposal params —
+        carried on the resolved HumanDecision for perform_action_with_result()
+        callers to read back; never mutates `evidence` itself.
         """
         pending = self._pending.get(request_id)
         fut = self._futures.get(request_id)
@@ -88,6 +96,7 @@ class ApprovalBroker:
         pending.status = status
         pending.resolved_at = _now()
         pending.resolved_by = resolved_by
+        pending.modified_evidence = modified_evidence
 
         def _set_result() -> None:
             if not fut.done():

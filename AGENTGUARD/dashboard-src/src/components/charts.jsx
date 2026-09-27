@@ -1,11 +1,15 @@
 import { EmptyState } from './ui'
 
-export function BarChart({ data, dataKey = 'count', labelKey = 'key', width = 480, height = 120 }) {
-  if (!data || !data.length) return <EmptyState />
+export function BarChart({ data, dataKey = 'count', labelKey = 'key', width = 480, height = 120, emptyTitle, emptyMessage }) {
+  if (!data || !data.length) return <EmptyState title={emptyTitle}>{emptyMessage}</EmptyState>
   const max = Math.max(...data.map((d) => d[dataKey]), 1)
   const barW = width / data.length
+  const gridYs = [0.25, 0.5, 0.75].map((f) => 16 + (height - 36) * f)
   return (
     <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`}>
+      {gridYs.map((y, i) => (
+        <line key={i} className="grid-line" x1={0} y1={y} x2={width} y2={y} />
+      ))}
       {data.map((d, i) => {
         const h = (d[dataKey] / max) * (height - 20)
         const x = i * barW + 2

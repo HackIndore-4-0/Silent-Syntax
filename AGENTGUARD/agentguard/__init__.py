@@ -16,9 +16,11 @@ from . import errors
 from ._runtime import configure
 from .client import AgentGuard, AuthenticationError
 from .context import (
+    ActionResult,
     get_replan_context,
     get_state,
     perform_action,
+    perform_action_with_result,
     record_tokens,
     request_approval,
     reset_state,
@@ -73,6 +75,8 @@ __all__ = [
     "record_tokens",
     "get_replan_context",
     "perform_action",
+    "perform_action_with_result",
+    "ActionResult",
     "request_approval",
     "configure",
     "wait_for_background_tasks",

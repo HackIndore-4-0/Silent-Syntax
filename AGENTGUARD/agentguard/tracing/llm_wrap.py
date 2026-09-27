@@ -62,6 +62,7 @@ def _extract_openai_shaped(response: Any) -> dict[str, Any] | None:
         "output_tokens": getattr(usage, "completion_tokens", None),
         "text": text,
         "tool_calls": tool_calls,
+        "model_name": getattr(response, "model", None),
     }
 
 
@@ -88,6 +89,7 @@ def _extract_anthropic_shaped(response: Any) -> dict[str, Any] | None:
         "output_tokens": getattr(usage, "output_tokens", None),
         "text": text,
         "tool_calls": tool_calls,
+        "model_name": getattr(response, "model", None),
     }
 
 
@@ -147,20 +149,23 @@ def _build_output(extracted: dict[str, Any] | None) -> Any:
     return extracted.get("text")
 
 
-def _record_tokens(extracted: dict[str, Any] | None) -> tuple[int | None, int | None, float | None]:
+def _record_tokens(extracted: dict[str, Any] | None) -> tuple[int | None, int | None, float | None, str | None]:
     """record_tokens() is plain synchronous code (agentguard/context.py)
     — no async/await needed here in either the sync or async call path."""
     if extracted is None:
-        return None, None, None
+        return None, None, None, None
     tokens_input = extracted.get("input_tokens")
     tokens_output = extracted.get("output_tokens")
     cost_usd = extracted.get("cost_usd")
+    model_name = extracted.get("model_name")
     if tokens_input is not None or tokens_output is not None or cost_usd is not None:
         try:
-            run_context.record_tokens(input_tokens=tokens_input, output_tokens=tokens_output, cost_usd=cost_usd)
+            run_context.record_tokens(
+                model_name=model_name, input_tokens=tokens_input, output_tokens=tokens_output, cost_usd=cost_usd,
+            )
         except RuntimeError:
             pass  # no active run somehow slipped through require_run() — never crash on bookkeeping
-    return tokens_input, tokens_output, cost_usd
+    return tokens_input, tokens_output, cost_usd, model_name
 
 
 def _make_traced_call(original: Callable[..., Any], call_name: str, extract: ExtractFn | None) -> Callable[..., Any]:
@@ -177,12 +182,13 @@ def _make_traced_call(original: Callable[..., Any], call_name: str, extract: Ext
                     await step.finish_failure(exc)
                     raise
                 extracted = _extract_usage(response, extract)
-                tokens_input, tokens_output, cost_usd = _record_tokens(extracted)
+                tokens_input, tokens_output, cost_usd, model_name = _record_tokens(extracted)
                 await step.finish_success(
                     _build_output(extracted),
                     tokens_input=tokens_input,
                     tokens_output=tokens_output,
                     cost_usd=cost_usd,
+                    model_name=model_name,
                 )
                 return response
 
@@ -204,13 +210,14 @@ def _make_traced_call(original: Callable[..., Any], call_name: str, extract: Ext
                     _pending.schedule(recorder.finish_failure(exc))
                     raise
                 extracted = _extract_usage(response, extract)
-                tokens_input, tokens_output, cost_usd = _record_tokens(extracted)
+                tokens_input, tokens_output, cost_usd, model_name = _record_tokens(extracted)
                 _pending.schedule(
                     recorder.finish_success(
                         _build_output(extracted),
                         tokens_input=tokens_input,
                         tokens_output=tokens_output,
                         cost_usd=cost_usd,
+                        model_name=model_name,
                     )
                 )
                 return response

@@ -70,7 +70,7 @@ from .errors import CircuitBreakerTripped, ForbiddenActionError, HumanRejected, 
 from .evaluators.base import Evaluator
 from .evaluators.llm_judge import AsyncEvaluator, LLMJudge
 from .evaluators.rule_based import ConstraintAdherenceEvaluator
-from .models import AgentState, Policy, Run, RunStatus
+from .models import AgentState, ModelAlternative, Policy, Run, RunStatus
 from .otel.instrumentation import start_agent_span, start_decision_span
 from .policy.engine import PolicyEngine
 from .recovery.seed import pop_recovery_seed
@@ -249,6 +249,20 @@ async def _execute(
         )
 
     await repository.create_run(run)
+    if run.policy.llm_gateway is not None and run.policy.llm_gateway.fallback_chain:
+        # Reflects real configured LLM-gateway fallback routing on the
+        # Models dashboard page's "Registered Fallbacks" panel —
+        # previously entirely disconnected from this table (see
+        # AGENTGUARD.md's Tier 3 notes). save_model_alternative() is
+        # already an upsert keyed on (workspace_id, primary_model), so
+        # this is safe to repeat on every run without accumulating rows.
+        for alt in run.policy.llm_gateway.fallback_chain:
+            await repository.save_model_alternative(
+                ModelAlternative(
+                    primary_model=alt.primary_model, fallback_model=alt.fallback_model,
+                    reliability_threshold=alt.reliability_threshold, workspace_id=run.workspace_id,
+                )
+            )
     ctx.record_event(
         "RUN_START",
         {

@@ -61,8 +61,11 @@ async def resolve_human_review(
     request_id: Optional[str] = None,
     resolved_by: Optional[str] = None,
     reason: str = "",
+    modified_evidence: Optional[dict] = None,
 ) -> HumanResolutionResult:
-    """outcome is one of "approved" | "rejected" | "replan"."""
+    """outcome is one of "approved" | "rejected" | "replan". `modified_evidence`
+    lets a reviewer approve with corrected params instead of the original
+    proposal — see agentguard.context.perform_action_with_result()."""
     pending = await repository.list_human_decisions(run_id)
     open_requests = [p for p in pending if p["status"] == "pending"]
     if request_id is not None:
@@ -71,7 +74,7 @@ async def resolve_human_review(
         return HumanResolutionResult(resolved=False, live=False, decision=None)
     target = open_requests[-1]
 
-    live = get_broker().resolve(target["id"], outcome, resolved_by)
+    live = get_broker().resolve(target["id"], outcome, resolved_by, modified_evidence)
     if live is not None:
         # context.request_approval() will persist the resolved
         # HumanDecision and drive the run's own status transition once
@@ -84,7 +87,10 @@ async def resolve_human_review(
         return HumanResolutionResult(resolved=False, live=False, decision=None)
 
     updated = HumanDecision(
-        **{**{k: v for k, v in target.items() if k in HumanDecision.model_fields}, "status": outcome, "resolved_by": resolved_by}
+        **{
+            **{k: v for k, v in target.items() if k in HumanDecision.model_fields},
+            "status": outcome, "resolved_by": resolved_by, "modified_evidence": modified_evidence,
+        }
     )
     from datetime import datetime, timezone
 

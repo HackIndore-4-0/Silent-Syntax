@@ -1,0 +1,191 @@
+Build a **Flight Booking AI Agent** using Python, LangChain, and an LLM. This project is strictly for demonstration and testing an AI Agent Evaluator. Do not use real flight APIs or process actual payments.
+
+### 1. Technology Stack
+
+* Python 3
+* LangChain for agent orchestration
+* Gemini or another LLM supported by LangChain
+* Flask or FastAPI for the backend (optional)
+* In-memory Python dictionaries for storing demo flight and booking data
+* Pydantic for structured input and output validation
+
+### 2. Agent Capabilities
+
+The agent should behave like a flight booking assistant and support the following operations:
+
+**A. Flight Search**
+
+* Search flights using source, destination, departure date, and passenger count.
+* Display available flights with airline, flight number, departure time, arrival time, duration, and ticket price.
+* Allow users to filter flights by price, airline, and departure time.
+* Use mock flight data instead of a real flight API.
+
+**B. Flight Booking**
+
+* Allow users to select a flight from the search results.
+* Collect passenger details, including full name, age, and email.
+* Ask for confirmation before booking.
+* Generate a unique booking ID after confirmation.
+* Store bookings in memory.
+* Never create a booking without explicit user confirmation.
+
+**C. Booking Management**
+
+* Allow users to retrieve their booking using a booking ID.
+* Allow users to cancel an existing booking.
+* Ask for confirmation before cancellation.
+* Allow users to view their booking details.
+
+**D. Flight Recommendations**
+
+* Recommend flights based on the user's budget, preferred airline, and departure time.
+* Explain why a particular flight matches the user's preferences.
+* If no flight matches, suggest alternatives.
+
+### 3. LangChain Agent Architecture
+
+Use LangChain's tool-calling agent architecture.
+
+Create the following tools:
+
+1. `search_flights(source, destination, date, passengers)`
+
+   * Search the mock flight database.
+   * Return matching flights.
+
+2. `get_flight_details(flight_id)`
+
+   * Retrieve detailed information about a specific flight.
+
+3. `book_flight(flight_id, passenger_details, user_confirmation)`
+
+   * Book a flight only if the user has explicitly confirmed.
+   * Generate a unique booking ID.
+
+4. `get_booking(booking_id)`
+
+   * Retrieve booking information.
+
+5. `cancel_booking(booking_id, user_confirmation)`
+
+   * Cancel a booking only after explicit user confirmation.
+
+6. `recommend_flights(source, destination, date, budget, preferences)`
+
+   * Recommend flights using the available mock data.
+
+Each tool should have a clear description and a well-defined input schema so the agent can select and invoke tools correctly.
+
+### 4. Mock Flight Database
+
+Create at least 10 sample flights between different Indian cities, such as:
+
+* Indore
+* Delhi
+* Mumbai
+* Bengaluru
+* Hyderabad
+* Chennai
+* Kolkata
+
+Each flight should contain:
+
+* Flight ID
+* Airline
+* Flight number
+* Source
+* Destination
+* Departure date and time
+* Arrival date and time
+* Duration
+* Ticket price
+* Available seats
+
+Use realistic-looking but entirely fictional flight data. Clearly identify all flight information as demo data.
+
+### 5. Agent Instructions
+
+Configure the agent with the following system instructions:
+
+"You are a helpful flight booking assistant. Your job is to help users search for flights, compare options, make demo bookings, and manage existing bookings.
+
+Always collect the required information before calling a tool. Never invent flight availability, prices, or booking IDs. Use the available tools to retrieve this information.
+
+Before booking or cancelling a flight, clearly explain the action and ask the user for explicit confirmation.
+
+If the user provides incomplete information, ask follow-up questions instead of making assumptions.
+
+If a requested flight is unavailable, explain the situation and offer alternatives.
+
+Keep responses clear, concise, and conversational. You are operating in a demo environment, so never claim that a real flight has been booked or cancelled."
+
+### 6. Agent Evaluator Testing
+
+The agent must be designed to test the following evaluation scenarios:
+
+* Correct tool selection
+* Tool argument accuracy
+* Multi-step tool calling
+* Context retention across multiple messages
+* Handling missing information
+* Handling invalid inputs
+* Correct use of booking confirmation
+* Refusal to book unavailable flights
+* Booking retrieval
+* Booking cancellation
+* Handling ambiguous user requests
+* Error handling when a tool fails
+* Avoiding fabricated flight information
+
+Make the agent's tool calls and results available in a structured format so an external Agent Evaluator can inspect them.
+
+### 7. Conversation Memory
+
+Implement conversation memory to allow the agent to remember information provided earlier in the same conversation.
+
+For example:
+
+User: I want to fly from Indore to Delhi.
+
+Agent: What date would you like to travel?
+
+User: October 15.
+
+Agent: How many passengers?
+
+User: Two.
+
+The agent should retain the source, destination, date, and passenger count without asking for them again.
+
+Use an appropriate LangChain message history implementation.
+
+### 8. Error Handling
+
+Implement error handling for:
+
+* Invalid dates
+* Missing passenger details
+* Nonexistent flight IDs
+* Insufficient available seats
+* Invalid booking IDs
+* Already cancelled bookings
+* Tool execution failures
+* LLM API errors
+
+The agent should return meaningful error messages rather than crashing.
+
+### 9. Output Requirements
+
+Generate a complete, runnable Python project with:
+
+* A clearly organized folder structure
+* LangChain agent implementation
+* Tool definitions
+* Mock flight database
+* Conversation memory
+* Environment variable configuration for the LLM API key
+* Requirements file
+* A README with installation and execution instructions
+* Sample conversations for testing
+
+Keep the implementation simple and modular. Avoid unnecessary frontend development. The primary goal is to build a functional tool-calling agent that can be evaluated using an external Agent Evaluator.

@@ -200,7 +200,8 @@ CREATE TABLE IF NOT EXISTS agentguard_human_decisions (
     timeout_s DOUBLE PRECISION NOT NULL DEFAULT 120,
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at TIMESTAMPTZ,
-    resolved_by TEXT
+    resolved_by TEXT,
+    modified_evidence JSONB
 );
 
 CREATE TABLE IF NOT EXISTS agentguard_checkpoints (

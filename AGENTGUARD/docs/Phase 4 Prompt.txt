@@ -1,0 +1,1602 @@
+You are continuing implementation of the AgentGuard project.
+
+Phase 1, Phase 2, and Phase 3 are already implemented.
+
+IMPORTANT:
+Do NOT rebuild Phase 1.
+Do NOT rebuild Phase 2.
+Do NOT rebuild Phase 3.
+Do NOT redesign the existing architecture.
+Preserve all existing functionality and APIs unless a concrete defect prevents Phase 4.
+
+The Final_Solution.pdf is the authoritative product specification.
+
+The current repository contains the completed Phase 1–3 implementation.
+
+Your task is ONLY:
+
+PHASE 4 — REPLAY, CLI & AUTO-IMPROVE
+
+========================================================
+PHASE 4 OBJECTIVE
+========================================================
+
+Implement:
+
+1. Failure Replay
+2. Agent Version Comparison / Regression Comparison
+3. CLI tooling
+4. CI/CD Reliability Gate
+5. Tool Reliability Profiles
+6. Alternative-Tool Recovery
+7. Agent Behavior Fingerprinting
+8. DSPy-based Auto-Improvement
+9. Prompt/workflow recommendation workflow
+10. Complete developer/admin Control Portal for existing policies and reliability controls
+11. Automated tests
+12. Full execution verification report
+
+The final Phase 4 system should close the loop:
+
+EXECUTION
+    ↓
+EVALUATION
+    ↓
+FAILURE
+    ↓
+ROOT CAUSE
+    ↓
+RECOVERY
+    ↓
+REPLAY
+    ↓
+REGRESSION COMPARISON
+    ↓
+RECOMMENDATION
+    ↓
+PROMPT / WORKFLOW IMPROVEMENT
+    ↓
+RE-EXECUTION
+    ↓
+RE-EVALUATION
+
+========================================================
+DO NOT IMPLEMENT / EXTEND INTO UNRELATED AREAS
+========================================================
+
+Do NOT introduce unrelated product features.
+
+Do not replace PostgreSQL with another database.
+
+Do not remove the existing OpenTelemetry architecture.
+
+Do not replace the existing Decision Engine.
+
+Do not remove the existing checkpoint, rollback, counterfactual,
+risk, confidence, audit or HITL implementations.
+
+Do not rebuild the dashboard from scratch.
+
+Production-scale multi-tenancy and physical service isolation remain
+future production-hardening concerns unless absolutely necessary
+for a clean interface.
+
+========================================================
+START WITH A BASELINE
+========================================================
+
+Before making any Phase 4 changes:
+
+1. Inspect the complete repository.
+2. Read:
+   - Final_Solution.pdf
+   - docs/EXECUTION_REPORT_PHASE_1.md
+   - docs/EXECUTION_REPORT_PHASE_2.md
+   - docs/EXECUTION_REPORT_PHASE_3.md
+3. Run the complete existing test suite.
+4. Record:
+   total
+   passed
+   failed
+   skipped
+5. Verify the Phase 3 canonical demo still works.
+
+Do NOT start Phase 4 if Phase 3 is broken.
+
+Record the baseline in the Phase 4 execution report.
+
+========================================================
+1. FAILURE REPLAY
+========================================================
+
+Implement actual failure replay.
+
+The replay mechanism must reconstruct the context available to the
+agent at a recorded decision point.
+
+A replay should include, as available:
+
+run ID
+task
+input
+policy
+policy version
+agent version
+model/prompt metadata
+state snapshots
+tool outputs
+LLM outputs
+decisions
+evaluations
+root cause
+risk
+confidence
+
+Expose programmatic API:
+
+replay(run_id)
+
+The implementation must NOT simply return stored logs.
+
+It should reconstruct a replay object/sequence that can be inspected
+step-by-step.
+
+Example:
+
+agentguard.replay("run_8F21")
+
+Step 1
+Task received
+
+Step 2
+State:
+max_budget = 60000
+
+Step 3
+State:
+max_budget = missing
+
+Step 4
+Selection:
+67000
+
+Step 5
+Constraint violation
+
+Step 6
+STOP
+
+Each step should clearly distinguish:
+
+recorded event
+state
+evaluation
+decision
+
+========================================================
+2. REPLAY SAFETY
+========================================================
+
+Do not execute external side effects during a historical replay.
+
+Default replay mode must be SAFE / DRY RUN.
+
+For example:
+
+payment
+delete
+database mutation
+external write
+
+must NOT execute during replay.
+
+Use recorded tool outputs where available.
+
+Clearly label:
+
+REPLAY MODE
+NO EXTERNAL SIDE EFFECTS
+
+A production implementation may later support explicitly authorized
+live replay, but that is NOT required here.
+
+========================================================
+3. REGRESSION COMPARISON
+========================================================
+
+Implement comparison between two agent versions or two runs/batches.
+
+Expose:
+
+compare(run_a, run_b)
+
+and/or a batch comparison API.
+
+At minimum compare:
+
+Correctness
+Goal Completion
+Constraint Adherence
+Decision Consistency
+Tool Usage
+Behavioral Reliability
+
+Also compare:
+
+risk
+confidence
+retry count
+replan count
+human intervention count
+failure count
+latency where available
+
+Example output:
+
+Agent v1
+constraint adherence: 72%
+
+Agent v2
+constraint adherence: 91%
+
+Delta:
++19 percentage points
+
+Do NOT call a new version "better" automatically.
+
+Report factual deltas.
+
+If one metric improves and another declines, show both.
+
+========================================================
+4. REGRESSION CORPUS
+========================================================
+
+Allow a collection of historical runs to act as a regression corpus.
+
+The corpus should contain:
+
+run IDs
+tasks
+expected constraints
+historical outcomes
+evaluation evidence
+
+Support:
+
+replay corpus against candidate agent
+evaluate candidate
+compare against baseline
+
+This corpus will later feed the CI gate and DSPy improvement process.
+
+Do not fabricate historical runs.
+
+========================================================
+5. CLI
+========================================================
+
+Implement the CLI specified by the final solution.
+
+Use Typer or Click.
+
+Required commands:
+
+agentguard tail <run_id>
+
+agentguard replay <run_id>
+
+agentguard report <run_id>
+
+agentguard compare <run_a> <run_b>
+
+agentguard ci-gate --threshold=<pct>
+
+agentguard verify-audit <run_id>
+
+The commands must use real AgentGuard APIs.
+
+Do not create shell commands that only print hard-coded sample text.
+
+========================================================
+6. agentguard tail
+========================================================
+
+Implement:
+
+agentguard tail <run_id>
+
+It should display the run's chronological event/decision stream.
+
+Example:
+
+10:21:01 RUN_START
+10:21:02 AGENT_STEP
+10:21:04 POLICY_CHECK
+10:21:05 EVALUATION
+10:21:06 ROOT_CAUSE
+10:21:06 STOP
+
+Support a useful --follow mode if the existing architecture supports
+live event streaming.
+
+If live following is not practical in the current architecture,
+implement a correct historical stream and document the limitation.
+
+========================================================
+7. agentguard report
+========================================================
+
+Implement:
+
+agentguard report <run_id>
+
+Output:
+
+status
+six evaluation dimensions
+risk
+confidence
+root cause
+recovery
+policy version
+decision history
+
+Do not duplicate logic already present in the Reliability Report.
+Reuse the existing report builder.
+
+Support:
+
+--json
+
+for machine-readable output.
+
+========================================================
+8. agentguard replay
+========================================================
+
+Implement:
+
+agentguard replay <run_id>
+
+Display:
+
+step number
+state
+event
+evaluation
+decision
+policy
+evidence
+
+Use SAFE/DRY-RUN mode by default.
+
+Add:
+
+--json
+
+if practical.
+
+========================================================
+9. agentguard compare
+========================================================
+
+Implement:
+
+agentguard compare <run_a> <run_b>
+
+Output:
+
+metric
+run A
+run B
+delta
+
+Include six reliability dimensions.
+
+Example:
+
+constraint_adherence    72%   91%   +19%
+goal_completion         91%   87%    -4%
+tool_usage              88%   88%     0%
+
+Do not output a subjective winner/ranking.
+This is an engineering regression report.
+
+========================================================
+10. CI/CD RELIABILITY GATE
+========================================================
+
+Implement:
+
+agentguard ci-gate --threshold=5
+
+Purpose:
+
+Prevent deployment when candidate reliability regresses beyond the
+configured threshold.
+
+Flow:
+
+CI
+ ↓
+Historical regression corpus
+ ↓
+Replay/evaluate candidate
+ ↓
+Compare baseline vs candidate
+ ↓
+Calculate regression
+ ↓
+PASS / BLOCK
+
+The command must return:
+
+exit code 0 = allowed
+
+non-zero = blocked
+
+The threshold must be configurable.
+
+Do NOT block deployment because of a metric that is unavailable.
+
+Document exactly which metrics participate in the gate.
+
+Do not silently invent a weighting formula.
+
+========================================================
+11. CI GATE RULE
+========================================================
+
+Define a deterministic regression policy.
+
+For example:
+
+A deployment is blocked if any protected safety metric regresses by
+more than the configured threshold.
+
+Candidate example:
+
+constraint adherence:
+baseline 96%
+candidate 88%
+
+threshold:
+5 percentage points
+
+Result:
+
+BLOCK
+
+For metrics that improve or remain within threshold:
+
+ALLOW
+
+Document the exact rule.
+
+========================================================
+12. AUDIT VERIFICATION CLI
+========================================================
+
+Implement:
+
+agentguard verify-audit <run_id>
+
+Reuse Phase 3 hash-chain verification.
+
+Output:
+
+events checked
+chain intact
+first invalid event if any
+
+Example:
+
+14 events checked
+AUDIT INTACT
+
+Tampered:
+
+14 events checked
+AUDIT INTEGRITY VIOLATION
+First broken event: <id>
+
+Do not duplicate hash logic.
+
+========================================================
+13. TOOL RELIABILITY PROFILES
+========================================================
+
+Now implement the ToolProfile functionality deferred from Phase 2/3.
+
+Track per tool:
+
+success rate
+failure rate
+timeout rate
+retry rate
+duplicate-call rate
+latency
+p95 latency where enough samples exist
+
+Store a historical baseline.
+
+Example:
+
+Search API
+
+success_rate: 97%
+timeout_rate: 1%
+retry_rate: 4%
+p95_latency: 420ms
+
+Payment API
+
+success_rate: 99%
+timeout_rate: 0.5%
+retry_rate: 1%
+p95_latency: 280ms
+
+Do not compute misleading statistics with insufficient sample sizes.
+
+Expose sample count.
+
+Example:
+
+sample_count: 2
+
+reliability:
+INSUFFICIENT_DATA
+
+========================================================
+14. ALTERNATIVE-TOOL RECOVERY
+========================================================
+
+Implement registered alternative tools.
+
+Example:
+
+primary:
+search_api
+
+fallback:
+search_api_backup
+
+Flow:
+
+Tool failure
+    ↓
+ToolProfile
+    ↓
+Reliability below threshold
+    ↓
+Alternative tool
+    ↓
+Retry
+    ↓
+Continue
+
+If no reliable alternative:
+
+REPLAN
+
+or
+
+HUMAN
+
+according to policy.
+
+Do not allow arbitrary tool substitution.
+
+Alternative tools must be explicitly registered/configured.
+
+Every substitution must appear in:
+
+decision history
+audit trail
+timeline
+reliability report
+
+========================================================
+15. TOOL RECOVERY TEST
+========================================================
+
+Create an E2E scenario:
+
+Primary tool:
+fails twice
+
+Alternative tool:
+succeeds
+
+Expected:
+
+Tool failure
+→ reliability check
+→ alternative tool selected
+→ successful execution
+→ CONTINUE
+
+Verify:
+
+primary tool profile
+alternative tool profile
+decision history
+final status
+audit event
+
+========================================================
+16. AGENT BEHAVIOR FINGERPRINTING
+========================================================
+
+Implement the behavior baseline described in the Final Solution.
+
+Track per agent:
+
+average tool calls
+retry rate
+latency
+completion rate
+failure rate
+decision distribution
+human intervention frequency
+
+Build a historical behavior profile.
+
+Example:
+
+Agent baseline:
+
+tool_calls = 7.2
+retry_rate = 0.8
+p95_latency = 2.8s
+
+Current run:
+
+tool_calls = 19
+retry_count = 8
+latency = 7.8s
+
+→ behavioral anomaly
+
+The fingerprint system must require sufficient history.
+
+Do not report a statistically meaningful baseline from one run.
+
+Expose:
+
+sample_count
+baseline
+current
+deviation
+anomaly flag
+
+========================================================
+17. AUTO-IMPROVEMENT
+========================================================
+
+Integrate DSPy as an optional dependency.
+
+Do not make the core SDK depend on DSPy.
+
+The existing package design should remain lightweight.
+
+Flow:
+
+Flagged runs
+    ↓
+Root causes
+    ↓
+Recommendations
+    ↓
+DSPy optimization
+    ↓
+Candidate prompt/workflow
+    ↓
+Historical regression evaluation
+    ↓
+Comparison
+    ↓
+Human/developer approval
+    ↓
+Candidate accepted or rejected
+
+IMPORTANT:
+
+Do NOT automatically deploy generated changes.
+
+Auto-improvement proposes candidates.
+
+A human/developer must approve deployment.
+
+========================================================
+18. PROMPT / WORKFLOW RECOMMENDATIONS
+========================================================
+
+Generate structured recommendations.
+
+Example:
+
+Problem:
+max_budget lost during state transition.
+
+Recommendation:
+Preserve max_budget as an immutable constraint in the planning state.
+
+Candidate change:
+
+before:
+constraint embedded only in prompt
+
+after:
+constraint stored in typed AgentState
+
+Show:
+
+problem
+root cause
+recommendation
+candidate change
+expected benefit
+validation status
+
+Do not claim that a recommendation improved the system until it has
+actually been evaluated.
+
+========================================================
+19. DSPy VALIDATION
+========================================================
+
+When DSPy proposes a candidate:
+
+1. Store candidate.
+2. Replay historical failure corpus.
+3. Evaluate candidate.
+4. Compare against baseline.
+5. Show factual deltas.
+6. Require approval before deployment.
+
+The improvement system must never bypass:
+
+policy
+audit
+regression testing
+human approval
+
+========================================================
+20. CONTROL / CONFIGURATION PORTAL
+========================================================
+
+The existing dashboard is now the main AgentGuard Web Portal.
+
+Add a dedicated:
+
+CONTROL / CONFIGURATION
+
+section.
+
+This should visually expose configuration that already exists in the
+backend.
+
+At minimum:
+
+Agent selection
+
+Policy
+├── Policy Version
+├── Max Cost
+├── Retry Limit
+├── Retry Exhaustion Action
+├── Required Approval Actions
+├── Forbidden Actions
+├── Uncertainty Fallback
+└── Risk threshold where already supported
+
+Evaluation
+├── Sampling configuration
+└── Enabled evaluators
+
+Human approval
+├── Timeout
+└── Default timeout action
+
+Tool recovery
+├── Tool
+├── Reliability threshold
+└── Registered alternatives
+
+IMPORTANT:
+
+The UI must call real backend APIs.
+
+Do not hard-code configuration.
+
+Saving a policy must create a new version rather than silently mutate
+the historical policy used by previous runs.
+
+Historical runs must continue pointing to their original policy version.
+
+========================================================
+21. CONTROL PORTAL SAFETY
+========================================================
+
+For destructive or high-impact configuration changes:
+
+Require explicit save/confirmation.
+
+Do not allow a frontend-only change to claim success before the backend
+confirms persistence.
+
+Display:
+
+Saved
+Policy Version: X
+
+If save fails:
+
+show the actual failure.
+
+========================================================
+22. API
+========================================================
+
+Preserve all existing endpoints.
+
+Add endpoints as needed for:
+
+replay
+compare
+tool profiles
+tool alternatives
+behavior fingerprint
+improvement candidates
+policy configuration
+
+Potential examples:
+
+GET /api/runs/{run_id}/replay
+
+GET /api/runs/compare
+
+GET /api/tools
+
+GET /api/tools/{tool_name}/profile
+
+GET /api/agents/{agent_id}/fingerprint
+
+GET /api/improvements
+
+POST /api/improvements/{id}/approve
+
+GET /api/policies
+
+POST /api/policies
+
+POST /api/policies/{id}/versions
+
+Use clear REST semantics.
+
+Do not expose secrets.
+
+========================================================
+23. DATABASE
+========================================================
+
+Add migrations for Phase 4 only.
+
+Potential entities:
+
+ToolProfile
+
+ToolAlternative
+
+BehaviorFingerprint
+
+ReplaySession
+
+RegressionComparison
+
+ImprovementCandidate
+
+ImprovementEvaluation
+
+Policy configuration metadata as required by the existing system
+
+CI gate results where persistence is genuinely useful.
+
+Use additive migrations.
+
+Do not destroy Phase 1–3 records.
+
+========================================================
+24. FULL CONTROL FLOW
+========================================================
+
+The completed architecture should now support:
+
+Agent
+ ↓
+AgentGuard SDK
+ ↓
+Policy / Guardrails
+ ↓
+Execution
+ ↓
+Evaluation
+ ↓
+Risk + Confidence
+ ↓
+Root Cause
+ ↓
+Decision
+ ↓
+Continue / Retry / Replan / Stop / Human / Rollback
+ ↓
+Audit
+ ↓
+Replay
+ ↓
+Regression Comparison
+ ↓
+Tool Reliability / Behavior Fingerprint
+ ↓
+Improvement Candidate
+ ↓
+DSPy optimization
+ ↓
+Historical validation
+ ↓
+CI/CD gate
+ ↓
+Approved deployment
+
+Do not bypass the Decision Engine.
+
+========================================================
+25. TESTING
+========================================================
+
+Do not mark Phase 4 complete without extensive tests.
+
+### Unit tests
+
+Replay:
+1. replay object creation
+2. ordered steps
+3. safe/DRY-RUN enforcement
+4. no external side effect
+
+Compare:
+5. metric delta calculation
+6. six-dimension comparison
+7. unavailable metrics handled correctly
+
+CLI:
+8. report
+9. replay
+10. compare
+11. verify-audit
+12. ci-gate
+
+Tool reliability:
+13. profile creation
+14. sample count
+15. success rate
+16. timeout rate
+17. insufficient data
+
+Alternative tools:
+18. fallback selection
+19. fallback rejection when unregistered
+20. recovery after primary failure
+
+Behavior fingerprint:
+21. baseline creation
+22. insufficient history handling
+23. anomaly detection
+
+Improvement:
+24. candidate creation
+25. candidate evaluation
+26. approval requirement
+
+Policy portal:
+27. create policy
+28. create new policy version
+29. preserve historical versions
+
+========================================================
+26. INTEGRATION TESTS
+========================================================
+
+Test:
+
+1. stored run → replay
+2. two runs → compare
+3. tool events → ToolProfile
+4. failed primary → alternative tool
+5. behavior history → fingerprint
+6. candidate improvement → regression evaluation
+7. policy creation → persistence
+8. policy version → new version
+9. old run → old policy version remains unchanged
+10. audit verification CLI → existing hash chain
+11. CI gate → correct exit codes
+
+========================================================
+27. E2E DEMO 1 — REPLAY
+========================================================
+
+Use the canonical Phase 3 budget-failure run.
+
+Expected:
+
+replay run
+→ safe mode
+→ S1
+→ S2
+→ S3 constraint disappears
+→ S4 bad selection
+→ STOP
+
+Show actual stored evidence.
+
+========================================================
+28. E2E DEMO 2 — REGRESSION
+========================================================
+
+Create two agent versions:
+
+v1
+v2
+
+Run both against the same historical corpus.
+
+Output factual metrics.
+
+Example:
+
+constraint adherence:
+v1 72
+v2 91
+delta +19
+
+goal completion:
+v1 91
+v2 87
+delta -4
+
+Do not label a winner.
+
+========================================================
+29. E2E DEMO 3 — TOOL FALLBACK
+========================================================
+
+Primary search tool fails.
+
+Alternative tool succeeds.
+
+Expected:
+
+primary failure
+→ ToolProfile evaluated
+→ fallback selected
+→ successful result
+→ CONTINUE
+
+Persist all events.
+
+========================================================
+30. E2E DEMO 4 — BEHAVIOR ANOMALY
+========================================================
+
+Build sufficient historical runs.
+
+Then produce anomalous behavior:
+
+normal:
+7 tool calls
+
+current:
+19 tool calls
+
+Expected:
+
+behavior deviation detected.
+
+The system should report:
+
+baseline
+current
+difference
+sample count
+anomaly state
+
+========================================================
+31. E2E DEMO 5 — CI GATE
+========================================================
+
+Baseline:
+
+constraint adherence = 96%
+
+Candidate:
+
+constraint adherence = 88%
+
+Threshold:
+
+5 percentage points
+
+Expected:
+
+regression = 8 percentage points
+
+CI result:
+
+BLOCK
+
+Exit code:
+
+non-zero
+
+Then test a candidate within threshold.
+
+Expected:
+
+PASS
+
+Exit code:
+
+0
+
+========================================================
+32. E2E DEMO 6 — AUTO IMPROVEMENT
+========================================================
+
+Use the canonical budget-loss failure.
+
+Input:
+
+failure history
+root cause
+recommendation
+
+Generate a candidate improvement.
+
+Then:
+
+historical replay
+→ candidate evaluation
+→ comparison
+
+Show candidate status:
+
+PROPOSED
+
+Do not automatically deploy.
+
+If an actual DSPy environment is unavailable:
+
+Implement and test the provider abstraction and a deterministic test
+optimizer.
+
+Clearly distinguish:
+
+DSPy code path exists
+
+from
+
+DSPy actually executed with a real optimizer/model.
+
+Do not claim real optimization if it did not happen.
+
+========================================================
+33. PORTAL E2E
+========================================================
+
+Using the real dashboard/backend:
+
+1. Open policy configuration.
+2. Read current policy.
+3. Change retry limit.
+4. Save.
+5. Verify a new policy version exists.
+6. Run agent.
+7. Verify run references the new policy version.
+8. Verify an older run still references its previous policy version.
+
+If interactive browser automation is unavailable:
+
+perform API + HTML/JS verification and state the limitation.
+
+Do not claim browser interaction if it was not actually performed.
+
+========================================================
+34. REGRESSION REQUIREMENT
+========================================================
+
+At the end:
+
+Run ALL tests from Phases 1–4.
+
+Nothing from earlier phases may regress.
+
+Show:
+
+Phase 1 baseline
+Phase 2 baseline
+Phase 3 baseline
+Phase 4 final
+
+All existing behavior must remain valid.
+
+========================================================
+35. PERFORMANCE
+========================================================
+
+Measure CLI/replay/compare operations where useful.
+
+Most importantly:
+
+Do not move DSPy optimization, historical replay, batch comparison,
+or CI corpus evaluation into the agent's synchronous response path.
+
+These are offline/developer operations.
+
+The runtime path remains:
+
+small synchronous safety checks
++
+asynchronous evaluation
+
+========================================================
+36. SECURITY
+========================================================
+
+Replay:
+
+NO external side effects by default.
+
+CLI:
+
+do not print secrets.
+
+Policy configuration:
+
+validate inputs.
+
+Improvement candidates:
+
+must not auto-deploy.
+
+Tool substitution:
+
+must only use registered alternatives.
+
+CI gate:
+
+must not be bypassable by malformed input or missing metric data.
+
+========================================================
+37. DOCUMENTATION
+========================================================
+
+Update README.md.
+
+Document:
+
+Replay
+Compare
+CLI
+CI gate
+Tool reliability
+Alternative-tool recovery
+Behavior fingerprinting
+DSPy improvement
+Control portal
+Policy versioning
+Regression corpus
+
+Provide exact commands.
+
+Examples:
+
+agentguard replay <run_id>
+
+agentguard report <run_id>
+
+agentguard compare <run_a> <run_b>
+
+agentguard verify-audit <run_id>
+
+agentguard ci-gate --threshold=5
+
+========================================================
+38. EXECUTION REPORT
+========================================================
+
+Create:
+
+docs/EXECUTION_REPORT_PHASE_4.md
+
+Mandatory structure:
+
+# AgentGuard Phase 4 Execution Report
+
+## 1. Baseline
+
+Phase 3 test results before Phase 4.
+
+## 2. Phase 4 Objective
+
+List every required objective.
+
+## 3. Components Implemented
+
+Table:
+
+| Component | Files | Implemented | Tested | Evidence | Status |
+
+Include:
+
+Replay
+Compare
+CLI
+CI Gate
+Tool Profiles
+Alternative Recovery
+Behavior Fingerprint
+DSPy / Improvement
+Control Portal
+Policy Version Control
+
+## 4. Objective Verification Matrix
+
+| Objective | Required | Implemented | Tested | Execution Evidence | Status |
+
+Every PASS must have actual evidence.
+
+## 5. Test Results
+
+Show:
+
+total
+passed
+failed
+skipped
+
+Break down:
+
+unit
+integration
+e2e
+
+## 6. Replay Evidence
+
+Actual run ID.
+
+Show:
+
+step sequence
+state
+decision
+evidence
+safe replay confirmation
+
+## 7. Regression Comparison Evidence
+
+Show:
+
+run/version A
+run/version B
+all metric values
+deltas
+
+## 8. CLI Evidence
+
+For every command:
+
+command
+exit code
+actual output summary
+
+Commands:
+
+tail
+replay
+report
+compare
+ci-gate
+verify-audit
+
+## 9. Tool Reliability Evidence
+
+Show:
+
+tool
+sample count
+success rate
+failure rate
+timeout
+latency
+reliability state
+
+## 10. Alternative Tool Recovery Evidence
+
+Show:
+
+primary
+failure
+profile
+alternative
+decision
+final result
+
+## 11. Behavior Fingerprint Evidence
+
+Show:
+
+agent
+sample count
+baseline
+current run
+deviation
+anomaly result
+
+## 12. CI Gate Evidence
+
+Show:
+
+baseline metrics
+candidate metrics
+threshold
+calculated regression
+exit code
+PASS/BLOCK
+
+Test both allowed and blocked cases.
+
+## 13. Auto-Improvement Evidence
+
+Show:
+
+failure
+root cause
+recommendation
+candidate
+historical evaluation
+comparison
+approval status
+
+Explicitly identify whether a real DSPy optimizer ran or a deterministic
+test optimizer was used.
+
+## 14. Policy Control Portal Evidence
+
+Show:
+
+old policy version
+new policy version
+configuration change
+new run referencing new version
+old run retaining old version
+
+## 15. API Verification
+
+List each new endpoint.
+
+Method
+Endpoint
+HTTP status
+result
+
+## 16. Dashboard Verification
+
+Verify the new portal sections.
+
+State whether browser interaction was actually tested.
+
+## 17. Regression Verification
+
+Run the entire suite.
+
+Show:
+
+Before Phase 4
+After Phase 4
+
+All prior-phase tests must remain green.
+
+## 18. Problems Encountered
+
+For each:
+
+Problem
+Root Cause
+Fix
+Verification
+
+## 19. Deviations
+
+Specification
+Actual implementation
+Reason
+Impact
+
+## 20. Environment Limitations
+
+Clearly state:
+
+PostgreSQL availability
+OTel collector availability
+LLM provider availability
+DSPy availability
+browser automation availability
+
+Do not hide these limitations.
+
+## 21. Final Verdict
+
+Use exactly one:
+
+PHASE 4 — PASS
+
+PHASE 4 — PARTIAL
+
+PHASE 4 — FAIL
+
+PASS only if:
+
+- replay works
+- comparison works
+- CLI works
+- CI gate works
+- tool profiles work
+- alternative recovery works
+- fingerprinting works with adequate history
+- improvement workflow works
+- control portal works against real backend APIs
+- all prior tests remain green
+- evidence is concrete
+
+========================================================
+FINAL RESPONSE
+========================================================
+
+After implementation respond with:
+
+1. Phase 4 status
+2. Phase 3 baseline
+3. Total final tests
+4. Replay result
+5. Compare result
+6. Tool fallback result
+7. Behavior fingerprint result
+8. CI gate result
+9. Auto-improvement result
+10. Control portal result
+11. Important files changed
+12. Exact commands
+13. Execution report path
+14. Limitations
+15. Confirmation that the complete AgentGuard implementation is now at Phase 4 completion
+
+Do not simply say "Phase complete".
+
+Provide evidence.
+
+========================================================
+STOP CONDITION
+========================================================
+
+STOP after Phase 4.
+
+Do not invent Phase 5.
+
+Do not automatically refactor the architecture after the phase is
+complete.
+
+Wait for review of:
+
+docs/EXECUTION_REPORT_PHASE_4.md
