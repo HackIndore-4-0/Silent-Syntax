@@ -69,9 +69,16 @@ _HEADER_TEMPLATE = """# Integrate AgentGuard into this project
 
 Project: __PROJECT_NAME__ (project_id: __PROJECT_ID__)
 API URL: __API_BASE_URL__
-Install: pip install agentguard
 
-## 1. Set environment variables
+## 1. Install AgentGuard
+
+AgentGuard is not published on PyPI yet — install it directly from source:
+
+    git clone https://github.com/HackIndore-4-0/Silent-Syntax.git
+    cd Silent-Syntax/AGENTGUARD
+    pip install -e .
+
+## 2. Set environment variables
 
     AGENTGUARD_API_KEY=${AGENTGUARD_API_KEY}
     AGENTGUARD_DATABASE_URL=${AGENTGUARD_DATABASE_URL}
@@ -114,7 +121,9 @@ def compose_skill(request: SkillRequest) -> str:
         # request (a metric that's real but belongs to a different
         # category) never leaks into the wrong section.
         valid_selected = tuple(m for m in requested if m in category.metric_keys)
-        sections.append(category.render_body(valid_selected))
+        body = category.render_body(valid_selected)
+        if body:  # a metric category checked with nothing selected renders "" -- omit it entirely
+            sections.append(body)
 
     sections.append(_FOOTER)
 

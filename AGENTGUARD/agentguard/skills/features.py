@@ -37,27 +37,44 @@ def _metric_lines(selected: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
-# Placeholder values for the few catalog metrics whose required_config
-# can't be inferred generically (deepeval.non_advice/.misuse/.role_violation).
-# Rendered directly into the suite so the Skill works as copy-pasted
-# rather than raising MissingMetricConfigError at run-trigger time --
-# the TODO comment flags that the placeholder should be reviewed, not
-# left silently wrong.
+# Placeholder values for catalog metrics whose required_config is a
+# plain JSON-safe literal (str/list) -- rendered directly into the suite
+# so the Skill works as copy-pasted rather than raising
+# MissingMetricConfigError at run-trigger time. The TODO comment flags
+# that the placeholder should be reviewed, not left silently wrong.
 _REQUIRED_CONFIG_PLACEHOLDERS: dict[str, object] = {
     "advice_types": ["financial", "medical"],
     "domain": "customer support",
     "role": "customer support agent",
+    "name": "Custom check",
+    "evaluation_steps": ["Describe the specific criteria this output must satisfy"],
 }
+
+# required_config params with NO possible JSON-safe literal placeholder
+# (expected_schema needs a real Pydantic class reference, not a string)
+# -- these metrics get manual-construction guidance instead of a bogus
+# config value that would look valid but be wrong.
+_MANUAL_ONLY_CONFIG_PARAMS = {"expected_schema"}
 
 
 def _metric_suite_lines(selected: tuple[str, ...]) -> str:
     lines = []
     for key in selected:
         spec = DEEPEVAL_CATALOG.get(key)
-        if spec and spec.required_config:
+        required = spec.required_config if spec else ()
+        if any(p in _MANUAL_ONLY_CONFIG_PARAMS for p in required):
+            manual_params = ", ".join(p for p in required if p in _MANUAL_ONLY_CONFIG_PARAMS)
+            lines.append(
+                f"        # {key} needs {manual_params} -- a real Python object (e.g. a Pydantic\n"
+                f"        # model class), not something a config dict can express. Construct it\n"
+                f"        # directly instead of via SuiteMetric:\n"
+                f"        #   from deepeval.metrics import JsonCorrectnessMetric\n"
+                f"        #   JsonCorrectnessMetric(expected_schema=YourSchema, threshold=0.7)"
+            )
+        elif required:
             config_items = ", ".join(
                 f"{param!r}: {_REQUIRED_CONFIG_PLACEHOLDERS.get(param, f'REPLACE_ME_{param}')!r}"
-                for param in spec.required_config
+                for param in required
             )
             lines.append(
                 f'        SuiteMetric(evaluator="{key}", threshold=0.7, config={{{config_items}}}),'
@@ -70,7 +87,11 @@ def _metric_suite_lines(selected: tuple[str, ...]) -> str:
 
 def _render_metric_category(label: str, selected: tuple[str, ...]) -> str:
     if not selected:
-        return f"## {label}\n\n(No specific metrics selected for this category.)\n"
+        # A category ticked in the UI with zero individual metrics
+        # expanded/checked underneath has nothing useful to say -- return
+        # empty so compose_skill omits the section entirely, instead of a
+        # dead "(No specific metrics selected...)" stub.
+        return ""
     return f"""## {label} (selected)
 
 This project will be scored on:
@@ -164,6 +185,15 @@ FEATURE_CATEGORIES: dict[str, FeatureCategory] = {
         description="Correct tool calls, correct arguments, and task completion checks.",
         metric_keys=("deepeval.tool_correctness", "deepeval.argument_correctness", "deepeval.task_completion"),
         render_body=lambda selected: _render_metric_category("Agentic / tool-use evaluation", selected),
+    ),
+    "other": FeatureCategory(
+        key="other", label="Other checks",
+        description="Summarization quality, JSON-schema correctness, prompt-alignment, and custom G-Eval criteria.",
+        metric_keys=(
+            "deepeval.summarization", "deepeval.json_correctness",
+            "deepeval.prompt_alignment", "deepeval.geval",
+        ),
+        render_body=lambda selected: _render_metric_category("Other checks", selected),
     ),
     "hitl": FeatureCategory(
         key="hitl", label="Human-in-the-loop approval",
