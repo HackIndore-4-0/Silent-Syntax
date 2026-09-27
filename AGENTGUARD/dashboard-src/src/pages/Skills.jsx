@@ -5,6 +5,7 @@ import { ErrorState, LoadingState, Panel, useApiData } from '../components/ui'
 export default function Skills() {
   const { loading, error, data: options } = useApiData('/api/v2/skills/options')
   const [projects, setProjects] = useState(null)
+  const [projectsError, setProjectsError] = useState(null)
   const [projectId, setProjectId] = useState('')
   const [framework, setFramework] = useState('plain_python')
   const [judgeModel, setJudgeModel] = useState('gpt-4o-mini')
@@ -16,10 +17,13 @@ export default function Skills() {
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    api('/api/projects').then((list) => {
-      setProjects(list)
-      if (list.length && !projectId) setProjectId(list[0].id)
-    })
+    api('/api/projects').then(
+      (list) => {
+        setProjects(list)
+        if (list.length && !projectId) setProjectId(list[0].id)
+      },
+      (e) => setProjectsError(e)
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -63,8 +67,9 @@ export default function Skills() {
     setCopied(true)
   }
 
-  if (loading || !projects) return <LoadingState />
   if (error) return <ErrorState error={error} />
+  if (projectsError) return <ErrorState error={projectsError} />
+  if (loading || !projects) return <LoadingState />
 
   return (
     <>

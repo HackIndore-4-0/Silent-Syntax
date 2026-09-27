@@ -49,7 +49,7 @@ def test_options_lists_frameworks_and_categories(repo, client):
     assert {cat["key"] for cat in body["categories"]} == {
         "rag", "safety", "agentic", "hitl", "trajectory", "benchmarking",
     }
-    assert {m["key"] for m in body["judge_models"]} == {"gpt-4o-mini", "gpt-4.1", "claude-sonnet-5"}
+    assert {m["key"] for m in body["judge_models"]} == {"gpt-4o-mini", "gpt-4.1", "gpt-4o"}
 
 
 def test_generate_for_an_owned_project_returns_markdown(repo, client):
@@ -80,13 +80,29 @@ def test_generate_with_a_custom_judge_model_uses_it(repo, client):
         "framework": "plain_python",
         "categories": ["safety"],
         "metrics": {"safety": ["deepeval.bias"]},
-        "judge_model": "claude-sonnet-5",
+        "judge_model": "gpt-4o",
     })
 
     assert response.status_code == 200
     markdown = response.json()["markdown"]
-    assert "claude-sonnet-5" in markdown
-    assert 'default_model="claude-sonnet-5"' in markdown
+    assert "gpt-4o" in markdown
+    assert 'default_model="gpt-4o"' in markdown
+
+
+def test_generate_with_unknown_judge_model_is_400(repo, client):
+    session = _login(client, email="skills7@example.com", name="Skills7", repo=repo)
+    c = TestClient(client.app, cookies=session["cookies"])
+    project_id = session["signup"].project.id
+
+    response = c.post("/api/v2/skills/generate", json={
+        "project_id": project_id,
+        "framework": "plain_python",
+        "categories": [],
+        "metrics": {},
+        "judge_model": "not-a-real-model",
+    })
+
+    assert response.status_code == 400
 
 
 def test_generate_for_another_workspaces_project_is_404(repo, client):

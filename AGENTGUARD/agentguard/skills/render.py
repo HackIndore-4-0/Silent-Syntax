@@ -10,6 +10,7 @@ would misread as placeholders).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .features import FEATURE_CATEGORIES
@@ -25,6 +26,12 @@ class UnknownFrameworkError(Exception):
 class UnknownCategoryError(Exception):
     def __init__(self, key: str) -> None:
         super().__init__(f"unknown feature category key: {key!r}")
+        self.key = key
+
+
+class UnknownJudgeModelError(Exception):
+    def __init__(self, key: str) -> None:
+        super().__init__(f"unknown judge model key: {key!r}")
         self.key = key
 
 
@@ -44,9 +51,18 @@ JUDGE_MODEL_OPTIONS = (
      "note": "Best for everyday RAG/safety checks where per-run cost matters more than maximum judge accuracy."},
     {"key": "gpt-4.1", "label": "gpt-4.1 — balanced",
      "note": "Noticeably more accurate judging than gpt-4o-mini at moderate extra cost; a good default for safety-critical categories."},
-    {"key": "claude-sonnet-5", "label": "claude-sonnet-5 — highest accuracy",
+    {"key": "gpt-4o", "label": "gpt-4o — highest accuracy",
      "note": "Use when judge accuracy matters more than cost, e.g. compliance-sensitive safety metrics or final pre-release evaluation."},
 )
+# Only OpenAI model names: DeepEval's default model resolution (used
+# whenever a metric's `model=` is a bare string, which is what
+# build_suite_evaluator_registry's default_model becomes) treats any
+# string as an OpenAI model — there is no Anthropic/other-provider
+# wrapper anywhere in agentguard/evaluation/, confirmed empirically
+# (a bare "claude-sonnet-5" string raises OpenAI's own "API key not
+# configured" error rather than calling Anthropic). Offering a
+# non-OpenAI name here would produce a Skill that looks right and fails.
+_JUDGE_MODEL_KEYS = frozenset(m["key"] for m in JUDGE_MODEL_OPTIONS)
 
 
 _HEADER_TEMPLATE = """# Integrate AgentGuard into this project
@@ -82,6 +98,8 @@ def compose_skill(request: SkillRequest) -> str:
     framework = FRAMEWORK_TEMPLATES.get(request.framework)
     if framework is None:
         raise UnknownFrameworkError(request.framework)
+    if request.judge_model not in _JUDGE_MODEL_KEYS:
+        raise UnknownJudgeModelError(request.judge_model)
 
     sections = [_HEADER_TEMPLATE, framework.body]
     if request.selected_categories:
@@ -101,13 +119,21 @@ def compose_skill(request: SkillRequest) -> str:
     sections.append(_FOOTER)
 
     markdown = "\n".join(sections)
-    return (
-        markdown
-        .replace("__PROJECT_NAME__", request.project_name)
-        .replace("__PROJECT_ID__", request.project_id)
-        .replace("__API_BASE_URL__", request.api_base_url)
-        .replace("__JUDGE_MODEL__", request.judge_model)
-    )
+    # A single-pass substitution: chained .replace() calls rescan the
+    # WHOLE string after each call, so a substituted value (e.g. a
+    # project name containing the literal text "__JUDGE_MODEL__" --
+    # project names are freely settable via POST /api/projects) would
+    # get corrupted by a LATER .replace() call matching inside what was
+    # just inserted. re.sub with a single combined pattern never rescans
+    # its own replacement text.
+    token_values = {
+        "__PROJECT_NAME__": request.project_name,
+        "__PROJECT_ID__": request.project_id,
+        "__API_BASE_URL__": request.api_base_url,
+        "__JUDGE_MODEL__": request.judge_model,
+    }
+    pattern = re.compile("|".join(re.escape(token) for token in token_values))
+    return pattern.sub(lambda m: token_values[m.group(0)], markdown)
 
 
 def list_skill_options() -> dict:

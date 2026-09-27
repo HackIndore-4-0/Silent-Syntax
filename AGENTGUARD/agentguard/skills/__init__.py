@@ -8,7 +8,14 @@ repository other than reading `metrics_catalog.py`'s existing metadata.
 """
 from .features import FEATURE_CATEGORIES, FeatureCategory
 from .frameworks import FRAMEWORK_TEMPLATES, FrameworkTemplate
-from .render import SkillRequest, UnknownCategoryError, UnknownFrameworkError, compose_skill, list_skill_options
+from .render import (
+    SkillRequest,
+    UnknownCategoryError,
+    UnknownFrameworkError,
+    UnknownJudgeModelError,
+    compose_skill,
+    list_skill_options,
+)
 
 __all__ = [
     "FEATURE_CATEGORIES",
@@ -20,4 +27,5 @@ __all__ = [
     "list_skill_options",
     "UnknownFrameworkError",
     "UnknownCategoryError",
+    "UnknownJudgeModelError",
 ]

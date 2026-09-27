@@ -44,6 +44,25 @@ class TestFeatureCategories:
         body = rag.render_body(())
         assert "This project will be scored on" not in body
 
+    def test_metrics_needing_required_config_render_a_placeholder_config_with_a_todo(self):
+        """Regression test: deepeval.non_advice/.misuse/.role_violation
+        need required_config (advice_types/domain/role respectively).
+        Without a config= placeholder, the generated Skill's suite would
+        raise MissingMetricConfigError the moment it's actually run --
+        looks correct, breaks at eval time. The rendered code must
+        include real config so it works as-is, plus a TODO flagging that
+        the placeholder should be reviewed."""
+        safety = FEATURE_CATEGORIES["safety"]
+        body = safety.render_body(("deepeval.non_advice",))
+        assert "config={" in body
+        assert "'advice_types'" in body
+        assert "TODO" in body
+
+    def test_metrics_without_required_config_render_no_config_kwarg(self):
+        safety = FEATURE_CATEGORIES["safety"]
+        body = safety.render_body(("deepeval.bias",))
+        assert "config=" not in body
+
     def test_non_metric_category_render_body_ignores_its_argument(self):
         hitl = FEATURE_CATEGORIES["hitl"]
         assert hitl.render_body(()) == hitl.render_body(("anything",))
