@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flight Booking AI Agent — Demo</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon">&#9992;</span>
+        <div class="brand-text">
+          <h1>Flight Booking AI Agent</h1>
+          <span class="subtitle">LangChain + Groq · Tool-calling demo</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="demo-badge">DEMO DATA ONLY · NO REAL FLIGHTS OR PAYMENTS</span>
+        <button id="new-chat-btn" class="ghost-btn">New Chat</button>
+        <button id="toggle-trace-btn" class="ghost-btn">Agent Trace</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="chat-panel">
+        <div id="messages" class="messages">
+          <div class="message agent">
+            <div class="bubble">
+              Hi! I'm your demo flight booking assistant. I can search flights, help you
+              book or cancel a demo reservation, and recommend options based on your
+              budget, airline, or timing preferences. Try:
+              <br /><br />
+              <em>"Find flights from Indore to Delhi on 2026-10-15 for 2 people."</em>
+            </div>
+          </div>
+        </div>
+
+        <form id="chat-form" class="composer">
+          <input
+            id="chat-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Ask about flights, bookings, or recommendations…"
+          />
+          <button type="submit" id="send-btn">Send</button>
+        </form>
+      </section>
+
+      <aside id="trace-panel" class="trace-panel">
+        <div class="trace-header">
+          <h2>Agent Trace</h2>
+          <span class="trace-hint">Structured tool calls for evaluator inspection</span>
+        </div>
+        <div id="trace-log" class="trace-log">
+          <p class="trace-empty">No tool calls yet. Ask the agent something to see its
+          tool selection, arguments, and results here.</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
