@@ -29,8 +29,18 @@ DEGRADED_THRESHOLD = 0.80
 
 
 def build_tool_profile(tool: str, events: list[dict[str, Any]]) -> ToolProfile:
+    """Raw per-call metrics (success_rate, latency, ...) are real
+    observed facts about however many calls actually happened, so they
+    are always reported once there is at least one — that is not the
+    "misleading statistic" this module's docstring warns against.
+
+    What genuinely needs MIN_SAMPLE_SIZE is the RELIABLE/DEGRADED/
+    UNRELIABLE *verdict*: that's a trend classification, a claim about
+    what to expect NEXT time, which a handful of calls cannot honestly
+    support — that classification alone stays INSUFFICIENT_DATA below
+    the threshold, even while the raw numbers above it are shown."""
     n = len(events)
-    if n < MIN_SAMPLE_SIZE:
+    if n == 0:
         return ToolProfile(
             tool=tool,
             sample_count=n,
@@ -54,7 +64,9 @@ def build_tool_profile(tool: str, events: list[dict[str, Any]]) -> ToolProfile:
     latency_mean = sum(latencies) / len(latencies) if latencies else None
     latency_p95 = _percentile(latencies, 0.95) if len(latencies) >= MIN_P95_SAMPLES else None
 
-    if success_rate >= RELIABLE_THRESHOLD:
+    if n < MIN_SAMPLE_SIZE:
+        reliability = "INSUFFICIENT_DATA"
+    elif success_rate >= RELIABLE_THRESHOLD:
         reliability = "RELIABLE"
     elif success_rate >= DEGRADED_THRESHOLD:
         reliability = "DEGRADED"

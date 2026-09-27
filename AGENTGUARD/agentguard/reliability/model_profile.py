@@ -31,8 +31,13 @@ def _mean(values: list[float]) -> float | None:
 
 
 def build_model_profile(model: str, events: list[dict[str, Any]]) -> ModelProfile:
+    """Raw per-call metrics are real observed facts about however many
+    calls actually happened, so they're always reported once there is at
+    least one. Only the RELIABLE/DEGRADED/UNRELIABLE *verdict* — a trend
+    claim about what to expect next time — needs MIN_SAMPLE_SIZE; see
+    tool_profile.py's build_tool_profile() docstring (identical rule)."""
     n = len(events)
-    if n < MIN_SAMPLE_SIZE:
+    if n == 0:
         return ModelProfile(
             model=model,
             sample_count=n,
@@ -54,7 +59,9 @@ def build_model_profile(model: str, events: list[dict[str, Any]]) -> ModelProfil
     tokens_output = [e["tokens_output"] for e in events if e.get("tokens_output") is not None]
     costs = [e["cost_usd"] for e in events if e.get("cost_usd") is not None]
 
-    if success_rate >= RELIABLE_THRESHOLD:
+    if n < MIN_SAMPLE_SIZE:
+        reliability = "INSUFFICIENT_DATA"
+    elif success_rate >= RELIABLE_THRESHOLD:
         reliability = "RELIABLE"
     elif success_rate >= DEGRADED_THRESHOLD:
         reliability = "DEGRADED"

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -246,6 +246,11 @@ class HumanDecisionRequest(BaseModel):
     request_id: str | None = None
     resolved_by: str | None = None
     reason: str = ""
+    modified_evidence: dict[str, Any] | None = None
+    """A reviewer's corrected version of the proposed action's params
+    (e.g. a counter-price) — set alongside outcome="approved" to resume
+    with these values instead of what was originally proposed. See
+    agentguard.context.perform_action_with_result()."""
 
 
 @app.post("/api/runs/{run_id}/human-decision")
@@ -269,6 +274,7 @@ async def post_human_decision(run_id: str, body: HumanDecisionRequest):
         request_id=body.request_id,
         resolved_by=body.resolved_by,
         reason=body.reason,
+        modified_evidence=body.modified_evidence,
     )
     if not result.resolved:
         return {"run_id": run_id, "resolved": False, "detail": "no matching pending human decision"}

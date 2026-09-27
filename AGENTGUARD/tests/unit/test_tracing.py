@@ -195,9 +195,10 @@ class _FakeChoice:
 
 
 class _FakeOpenAIResponse:
-    def __init__(self, text, prompt_tokens, completion_tokens):
+    def __init__(self, text, prompt_tokens, completion_tokens, model="gpt-4o-mini"):
         self.choices = [_FakeChoice(text)]
         self.usage = _FakeUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        self.model = model
 
 
 class _FakeOpenAIClient:
@@ -220,9 +221,10 @@ class _FakeContentBlock:
 
 
 class _FakeAnthropicResponse:
-    def __init__(self, text, input_tokens, output_tokens):
+    def __init__(self, text, input_tokens, output_tokens, model="claude-3-5-sonnet-latest"):
         self.content = [_FakeContentBlock(text)]
         self.usage = _FakeUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        self.model = model
 
 
 class _FakeAnthropicClient:
@@ -251,6 +253,7 @@ async def test_wrap_llm_client_openai_shaped(fake_repository):
     assert steps[0]["kind"] == "llm_call"
     assert steps[0]["tokens_input"] == 10
     assert steps[0]["tokens_output"] == 5
+    assert steps[0]["model_name"] == "gpt-4o-mini"  # regression: wrap_llm_client used to never set this
     assert steps[0]["output"] == "hello from openai-shaped fake"  # plain text, unchanged when no tool call
 
     run = await fake_repository.get_run(run_id)
@@ -274,6 +277,7 @@ async def test_wrap_llm_client_anthropic_shaped(fake_repository):
     assert len(steps) == 1
     assert steps[0]["tokens_input"] == 7
     assert steps[0]["tokens_output"] == 3
+    assert steps[0]["model_name"] == "claude-3-5-sonnet-latest"  # regression: wrap_llm_client used to never set this
     assert steps[0]["output"] == "hello from anthropic-shaped fake"  # plain text, unchanged when no tool call
 
 

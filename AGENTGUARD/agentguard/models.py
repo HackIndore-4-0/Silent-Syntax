@@ -339,6 +339,13 @@ class HumanDecision(BaseModel):
     requested_at: datetime = Field(default_factory=_now)
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+    modified_evidence: dict[str, Any] | None = None
+    """Reviewer-edited version of the originally proposed `evidence`
+    (e.g. a corrected price) — set only when a human corrected the
+    proposed action's parameters instead of a bare approve/reject.
+    Treated as "approved, but with these values instead" (see
+    perform_action_with_result()); `evidence` itself is never mutated,
+    so it stays the immutable historical record of what was PROPOSED."""
 
 
 class Decision(BaseModel):

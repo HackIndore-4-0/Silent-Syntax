@@ -97,8 +97,10 @@ class FingerprintEngine:
     def __init__(self, repository: Any) -> None:
         self._repository = repository
 
-    async def fingerprint(self, agent_name: str, *, current_run_id: str | None = None) -> BehaviorFingerprint:
-        all_runs = await self._repository.list_runs_by_agent(agent_name)
+    async def fingerprint(
+        self, agent_name: str, *, current_run_id: str | None = None, workspace_id: str | None = None
+    ) -> BehaviorFingerprint:
+        all_runs = await self._repository.list_runs_by_agent(agent_name, workspace_id=workspace_id)
         current_run = None
         historical = []
         for r in all_runs:
