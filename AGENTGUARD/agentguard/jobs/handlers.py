@@ -9,11 +9,15 @@ from typing import Any
 
 from ..evaluation.dataset.sources.base import EvidenceSource
 from ..evaluation.dataset.validator import GoldenDatasetValidator, JudgeFn
-from ..models import DatasetExample
+from ..evaluation.engine import EvaluationEngine, build_eval_case_from_run
+from ..evaluation.evaluators.base import EvalCase
+from ..evaluation.registry import build_suite_evaluator_registry
+from ..models import DatasetExample, EvaluationSuite
 from ..storage.repository import RunRepository
-from .worker import JobHandler
+from .worker import JobHandler, PermanentJobFailure
 
 DATASET_VALIDATION_JOB_KIND = "dataset_validation"
+EVALUATION_SUITE_RUN_JOB_KIND = "evaluation_suite_run"
 
 
 def make_dataset_validation_handler(
@@ -36,5 +40,37 @@ def make_dataset_validation_handler(
         for example_dict in examples:
             example = DatasetExample(**example_dict)
             await validator.validate_example(example)
+
+    return handler
+
+
+def make_evaluation_run_handler(
+    repository: RunRepository,
+    *,
+    default_judge_model: Any = None,
+) -> JobHandler:
+    """Builds a fresh, suite-scoped evaluator registry per job invocation
+    (see build_suite_evaluator_registry) since the suite's own thresholds/
+    config are only known once the payload's suite_id is loaded -- unlike
+    dataset_validation's source/judge, there is nothing evaluation-specific
+    to bind at worker-startup time here."""
+
+    async def handler(payload: dict[str, Any]) -> None:
+        suite_dict = await repository.get_evaluation_suite(payload["suite_id"])
+        if suite_dict is None:
+            raise PermanentJobFailure(f"evaluation suite '{payload['suite_id']}' not found")
+        suite = EvaluationSuite(**suite_dict)
+
+        cases: list[EvalCase] = []
+        for run_id in payload["source_run_ids"]:
+            run = await repository.get_run(run_id)
+            if run is None:
+                continue  # a since-deleted/unreachable run: skip, don't fail the whole job
+            steps = await repository.list_trace_steps_for_run(run_id)
+            cases.append(build_eval_case_from_run(run, steps))
+
+        evaluators = build_suite_evaluator_registry(suite, repository=repository, default_model=default_judge_model)
+        engine = EvaluationEngine(repository, evaluators)
+        await engine.run_suite(suite, cases, workspace_id=payload.get("workspace_id"))
 
     return handler

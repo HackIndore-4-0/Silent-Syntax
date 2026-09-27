@@ -384,11 +384,26 @@ async def _worker(poll_interval_s: float) -> None:
     from .._runtime import get_repository
     from ..evaluation.dataset.llm_judge import make_llm_judge
     from ..evaluation.dataset.sources.postgres_source import PostgresEvidenceSource
-    from ..jobs import DATASET_VALIDATION_JOB_KIND, Worker, make_dataset_validation_handler
+    from ..jobs import (
+        DATASET_VALIDATION_JOB_KIND,
+        EVALUATION_SUITE_RUN_JOB_KIND,
+        Worker,
+        make_dataset_validation_handler,
+        make_evaluation_run_handler,
+    )
     from ..llm.provider import get_default_provider
     import os
 
     handlers: dict[str, Any] = {}
+
+    # Needs only the repository (unlike dataset_validation's external
+    # evidence-source requirement below), so it's always registered. A
+    # suite referencing a deepeval.* key without `deepeval` installed
+    # surfaces a loud, per-item job failure -- never a silent skip --
+    # through the same optional-dependency contract every other
+    # deepeval.* touchpoint in this codebase already uses.
+    handlers[EVALUATION_SUITE_RUN_JOB_KIND] = make_evaluation_run_handler(get_repository())
+    typer.echo("agentguard worker: evaluation_suite_run handler registered")
 
     validation_db_url = os.environ.get("AGENTGUARD_VALIDATION_DB_URL")
     validation_query = os.environ.get("AGENTGUARD_VALIDATION_QUERY")
@@ -414,10 +429,11 @@ async def _worker(poll_interval_s: float) -> None:
 
 @app.command(
     name="worker",
-    help="Run a durable job-queue worker (agentguard/jobs/). Blocks until terminated. Currently wires the "
-    "dataset_validation job kind when AGENTGUARD_VALIDATION_DB_URL + AGENTGUARD_VALIDATION_QUERY are set "
-    "(the judge model is agentguard.llm.provider.get_default_provider() — a real Anthropic call if "
-    "ANTHROPIC_API_KEY is configured, otherwise the clearly-labeled deterministic stand-in).",
+    help="Run a durable job-queue worker (agentguard/jobs/). Blocks until terminated. Always wires the "
+    "evaluation_suite_run job kind. Also wires dataset_validation when AGENTGUARD_VALIDATION_DB_URL + "
+    "AGENTGUARD_VALIDATION_QUERY are set (the judge model is agentguard.llm.provider.get_default_provider() "
+    "— a real Anthropic call if ANTHROPIC_API_KEY is configured, otherwise the clearly-labeled deterministic "
+    "stand-in).",
 )
 def worker(
     poll_interval_s: float = typer.Option(2.0, "--poll-interval", help="Seconds to sleep between empty-queue polls."),

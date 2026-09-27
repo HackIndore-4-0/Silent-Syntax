@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 import agentguard
-from agentguard.jobs import Worker
+from agentguard.jobs import PermanentJobFailure, Worker
 from agentguard.models import Job
 
 from ..fakes import InMemoryRunRepository
@@ -137,6 +137,21 @@ class TestWorker:
         assert stored["status"] == "pending"
         assert stored["attempts"] == 1
         assert "handler exploded" in stored["error"]
+
+    async def test_permanent_job_failure_fails_immediately_without_retry(self, fake_repository):
+        async def permanently_failing_handler(payload):
+            raise PermanentJobFailure("suite not found, will never exist")
+
+        job = Job(kind="demo", max_attempts=5)
+        await fake_repository.enqueue_job(job)
+        worker = Worker(fake_repository, {"demo": permanently_failing_handler})
+
+        await worker.run_once()
+
+        stored = await fake_repository.get_job(job.id)
+        assert stored["status"] == "failed"
+        assert stored["attempts"] == 1
+        assert "suite not found" in stored["error"]
 
     async def test_a_successful_run_marks_the_job_complete(self, fake_repository):
         async def handler(payload):

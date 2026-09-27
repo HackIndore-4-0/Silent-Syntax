@@ -24,6 +24,14 @@ logger = logging.getLogger("agentguard.jobs")
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+class PermanentJobFailure(Exception):
+    """Raise from a JobHandler to signal a non-retryable failure (e.g. a
+    referenced id that will never exist) — Worker.run_once() maps this to
+    fail_job(..., retry=False) instead of the generic retry=True every
+    other exception gets, so a job that can never succeed doesn't spend
+    max_attempts retries just to reach the same terminal state slower."""
+
+
 class Worker:
     def __init__(self, repository: Any, handlers: dict[str, JobHandler]) -> None:
         self._repository = repository
@@ -52,6 +60,9 @@ class Worker:
 
         try:
             await handler(job["payload"])
+        except PermanentJobFailure as exc:
+            logger.exception("job %s (kind=%s) permanently failed", job["id"], job["kind"])
+            await self._repository.fail_job(job["id"], str(exc), retry=False)
         except Exception as exc:
             logger.exception("job %s (kind=%s) failed", job["id"], job["kind"])
             await self._repository.fail_job(job["id"], str(exc), retry=True)

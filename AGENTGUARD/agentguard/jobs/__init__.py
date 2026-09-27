@@ -5,14 +5,22 @@ hours and must survive a process restart. See Worker's own docstring
 for why this is a separate mechanism, not another `create_task` call.
 """
 from ..models import Job, JobStatus
-from .handlers import DATASET_VALIDATION_JOB_KIND, make_dataset_validation_handler
-from .worker import JobHandler, Worker
+from .handlers import (
+    DATASET_VALIDATION_JOB_KIND,
+    EVALUATION_SUITE_RUN_JOB_KIND,
+    make_dataset_validation_handler,
+    make_evaluation_run_handler,
+)
+from .worker import JobHandler, PermanentJobFailure, Worker
 
 __all__ = [
     "Job",
     "JobStatus",
     "Worker",
     "JobHandler",
+    "PermanentJobFailure",
     "DATASET_VALIDATION_JOB_KIND",
     "make_dataset_validation_handler",
+    "EVALUATION_SUITE_RUN_JOB_KIND",
+    "make_evaluation_run_handler",
 ]

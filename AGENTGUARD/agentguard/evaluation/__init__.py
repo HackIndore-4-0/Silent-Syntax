@@ -22,6 +22,14 @@ from .evaluators.deepeval_adapter import DeepEvalEvaluator
 from .evaluators.handoff import ChainHandoffEvaluator, HandoffEvaluator
 from .evaluators.ragas_adapter import RagasEvaluator
 from .evaluators.trajectory import TrajectoryEvaluator, TrajectoryFinding, TrajectoryJudgeVerdict, compute_step_count_baseline
+from .metrics_catalog import (
+    DEEPEVAL_CATALOG,
+    MissingMetricConfigError,
+    UnknownMetricError,
+    build_deepeval_evaluator,
+    list_deepeval_catalog,
+)
+from .registry import build_default_evaluator_registry, build_suite_evaluator_registry
 
 __all__ = [
     "EvaluationSuite",
@@ -43,4 +51,11 @@ __all__ = [
     "build_eval_case_from_run",
     "EvaluationDiagnosis",
     "diagnose_evaluation_failure",
+    "DEEPEVAL_CATALOG",
+    "list_deepeval_catalog",
+    "build_deepeval_evaluator",
+    "UnknownMetricError",
+    "MissingMetricConfigError",
+    "build_suite_evaluator_registry",
+    "build_default_evaluator_registry",
 ]
