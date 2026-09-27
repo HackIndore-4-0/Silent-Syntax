@@ -91,6 +91,20 @@ class TestComposeSkill:
         markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
         assert "RAG evaluation" not in markdown
 
+    def test_function_reference_section_is_always_included(self):
+        """The generated Skill should be a complete-enough reference that
+        the coding agent doesn't need to guess at AgentGuard's API --
+        every major function/decorator gets a one-line usage example,
+        regardless of which categories were selected."""
+        markdown = compose_skill(_request(selected_categories=()))
+        assert "## AgentGuard function reference" in markdown
+        for symbol in [
+            "perform_action(", "perform_action_with_result(", "request_approval(",
+            "update_state(", "get_state(", "reset_state(", "record_tokens(",
+            "wait_for_background_tasks(", "traced_acompletion(", "wrap_llm_client(",
+        ]:
+            assert symbol in markdown, f"missing reference for {symbol}"
+
     def test_framework_body_is_included_for_each_framework(self):
         for framework_key, expected_snippet in [
             ("plain_python", "@guard.monitor(policy=Policy("),

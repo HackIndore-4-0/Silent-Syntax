@@ -94,6 +94,50 @@ selected metric below uses it unless a metric overrides it:
     evaluators = build_suite_evaluator_registry(suite, repository=repository, default_model="__JUDGE_MODEL__")
 """
 
+_FUNCTION_REFERENCE = """## AgentGuard function reference
+
+Beyond `@monitor`, these are the functions available inside a monitored
+run (call them from anywhere in your agent's code while it's executing
+under `@guard.monitor`):
+
+    import agentguard
+
+    # State snapshots -- recorded on the dashboard's Run timeline.
+    agentguard.update_state(**kwargs)      # merge kwargs into the run's current state
+    agentguard.get_state()                 # read the current state back
+    agentguard.reset_state()               # clear it
+
+    # Real token/cost usage (Tokens & Cost dashboard page) -- only call
+    # with numbers you actually have, never an estimate.
+    agentguard.record_tokens(model_name="gpt-4o-mini", input_tokens=120, output_tokens=45, cost_usd=0.0009)
+
+    # Policy-gated actions -- runs the forbidden/require_approval checks
+    # from your Policy before letting the action proceed.
+    finding = await agentguard.perform_action("some_action", **evidence)
+    # ...or, to also read back a reviewer's edited parameters on approval:
+    result = await agentguard.perform_action_with_result("some_action", **evidence)
+
+    # Low-level human approval primitive (perform_action calls this for
+    # you when an action is in Policy.require_approval -- call it
+    # directly only if you need to ask for approval outside that check):
+    decision = await agentguard.request_approval("some_action", reason="why this needs a human")
+
+    # Blocks until any fire-and-forget background trace writes finish --
+    # call at the very end of a script/test so nothing is lost on exit.
+    await agentguard.wait_for_background_tasks()
+
+    # Drop-in replacements for litellm.acompletion/.completion that
+    # automatically record an "llm_call" trace step (model, tokens, cost):
+    from agentguard.tracing import traced_acompletion, traced_completion
+    response = await traced_acompletion(model="gpt-4o-mini", messages=[...])
+
+    # Wraps ANY LLM client object (OpenAI, Anthropic, etc.) so every
+    # call through it is traced the same way, when you can't switch to
+    # traced_acompletion directly:
+    from agentguard.tracing import wrap_llm_client
+    client = wrap_llm_client(your_openai_or_anthropic_client)
+"""
+
 _FOOTER = """
 ## Verify
 
@@ -108,7 +152,7 @@ def compose_skill(request: SkillRequest) -> str:
     if request.judge_model not in _JUDGE_MODEL_KEYS:
         raise UnknownJudgeModelError(request.judge_model)
 
-    sections = [_HEADER_TEMPLATE, framework.body]
+    sections = [_HEADER_TEMPLATE, framework.body, _FUNCTION_REFERENCE]
     if request.selected_categories:
         sections.append(_JUDGE_MODEL_TEMPLATE)
 
