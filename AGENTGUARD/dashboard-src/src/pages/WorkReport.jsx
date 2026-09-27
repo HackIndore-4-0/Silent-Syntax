@@ -1,17 +1,22 @@
 import { useLayoutEffect, useRef } from 'react'
+import { Navigate } from 'react-router-dom'
 import { gsap } from 'gsap'
+import { useAuth } from '../auth/AuthContext'
 
 // Standalone report page — deliberately outside ProtectedLayout/the app
-// shell (own nav, own auth state) since it's a point-in-time write-up,
-// not a live dashboard view. Reuses the app's existing color/type tokens
-// from index.css (--bg, --surface, --ink, --accent, --mono, --font, …).
+// shell's sidebar/topbar chrome (own nav, own branded layout) since it's
+// a point-in-time write-up, not a live dashboard view. Still requires a
+// real login (same check ProtectedLayout uses) since its own content is
+// an "internal engineering report" — not meant to be public. Reuses the
+// app's existing color/type tokens from index.css (--bg, --surface,
+// --ink, --accent, --mono, --font, …).
 
 const ENTRIES = [
   {
     cat: 'ENVIRONMENT',
     title: 'Local stack provisioned from a clean machine',
     body: 'PostgreSQL 16 installed and configured (role, database, schema migrations), a Python virtual environment created, and the SDK installed in editable mode with the dev and server extras.',
-    detail: 'psql: agentguard / agentguard @ localhost:5432',
+    detail: 'psql @ localhost:5432 (see .env.example for connection defaults)',
   },
   {
     cat: 'APPLICATION',
@@ -43,9 +48,11 @@ const ENTRIES = [
 ]
 
 export default function WorkReport() {
+  const { status } = useAuth()
   const rootRef = useRef(null)
 
   useLayoutEffect(() => {
+    if (status !== 'authenticated') return undefined  // nothing to animate pre-login
     const ctx = gsap.context(() => {
       const tl = gsap.timeline({ defaults: { ease: 'power2.out' } })
       tl.from('.wr-title', { opacity: 0, y: 8, duration: 0.45 })
@@ -56,7 +63,10 @@ export default function WorkReport() {
     }, rootRef)
 
     return () => ctx.revert()
-  }, [])
+  }, [status])
+
+  if (status === 'loading') return null
+  if (status === 'anonymous') return <Navigate to="/login" replace />
 
   return (
     <div className="work-report" ref={rootRef}>
@@ -108,7 +118,7 @@ export default function WorkReport() {
                   <tr><td>PostgreSQL 16</td><td><span className="wr-dot" />Running, schema migrated</td></tr>
                   <tr><td>API server</td><td><span className="wr-dot" />Running &mdash; <code>127.0.0.1:8000</code></td></tr>
                   <tr><td>Dashboard</td><td>Built, served at <code>127.0.0.1:8000</code></td></tr>
-                  <tr><td>Demo login</td><td><code>demo@agentguard.dev</code> / <code>demopass123</code></td></tr>
+                  <tr><td>Demo login</td><td>Available via the "Demo login" button on the Sign in page</td></tr>
                 </tbody>
               </table>
             </div>

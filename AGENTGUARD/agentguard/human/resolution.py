@@ -74,7 +74,7 @@ async def resolve_human_review(
         return HumanResolutionResult(resolved=False, live=False, decision=None)
     target = open_requests[-1]
 
-    live = get_broker().resolve(target["id"], outcome, resolved_by, modified_evidence)
+    live = get_broker().resolve(target["id"], outcome, resolved_by, modified_evidence, reason=reason or None)
     if live is not None:
         # context.request_approval() will persist the resolved
         # HumanDecision and drive the run's own status transition once

@@ -42,6 +42,13 @@ from agentguard.evaluation.diagnose import diagnose_evaluation_failure
 from agentguard.evaluation.recommend import EvaluationRecommendationEngine
 from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND
 from agentguard.models import EvaluationSuite, Job, SuiteMetric, ToolAlternative
+from agentguard.skills import (
+    SkillRequest,
+    UnknownCategoryError,
+    UnknownFrameworkError,
+    compose_skill,
+    list_skill_options,
+)
 from pydantic import BaseModel
 
 from .auth import get_current_workspace_id
@@ -1017,3 +1024,40 @@ async def list_eval_recommendations_v2(
     design doc §10/§11), never at the plain `/recommendations` path,
     which is already the Improvement-candidate page above."""
     return await get_repository().list_recommendations(kind=kind, workspace_id=workspace_id)
+
+
+# -- Skills Generator -----------------------------------------------------------------
+
+
+@router.get("/skills/options")
+async def get_skill_options_v2(workspace_id: str = Depends(get_current_workspace_id)):
+    return list_skill_options()
+
+
+class SkillGenerateRequestV2(BaseModel):
+    project_id: str
+    framework: str
+    categories: list[str] = []
+    metrics: dict[str, list[str]] = {}
+
+
+@router.post("/skills/generate")
+async def generate_skill_v2(body: SkillGenerateRequestV2, workspace_id: str = Depends(get_current_workspace_id)):
+    repository = get_repository()
+    project = await repository.get_project(body.project_id)
+    if project is None or project.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    request = SkillRequest(
+        project_id=project["id"],
+        project_name=project["name"],
+        api_base_url="http://127.0.0.1:8000",
+        framework=body.framework,
+        selected_categories=tuple(body.categories),
+        selected_metrics={k: tuple(v) for k, v in body.metrics.items()},
+    )
+    try:
+        markdown = compose_skill(request)
+    except (UnknownFrameworkError, UnknownCategoryError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"markdown": markdown}

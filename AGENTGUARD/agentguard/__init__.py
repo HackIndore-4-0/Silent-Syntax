@@ -12,6 +12,11 @@ docs/EXECUTION_REPORT_PHASE_2.md for what was actually implemented and
 verified, and docs/PHASE1.md / this module's docstrings for what remains
 deferred to Phase 3/4.
 """
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from ._version import __version__
 from . import errors
 from ._runtime import configure
 from .client import AgentGuard, AuthenticationError
@@ -82,5 +87,3 @@ __all__ = [
     "wait_for_background_tasks",
     "errors",
 ]
-
-__version__ = "0.2.0"

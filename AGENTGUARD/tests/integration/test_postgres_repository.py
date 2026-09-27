@@ -98,6 +98,24 @@ async def test_get_run_returns_none_for_unknown_id(repo):
     assert await repo.get_run("does-not-exist") is None
 
 
+async def test_create_run_persists_git_and_dependency_metadata(repo):
+    run = Run(
+        agent_name="a", policy=Policy(max_cost=60000),
+        git_commit_sha="a" * 40, git_branch="main", git_dirty=False, git_remote="https://example.com/repo.git",
+        dependency_lockfile_hash="b" * 64, dependency_lockfile_path="uv.lock", sdk_version="0.2.0",
+    )
+    await repo.create_run(run)
+
+    fetched = await repo.get_run(run.id)
+    assert fetched["git_commit_sha"] == "a" * 40
+    assert fetched["git_branch"] == "main"
+    assert fetched["git_dirty"] is False
+    assert fetched["git_remote"] == "https://example.com/repo.git"
+    assert fetched["dependency_lockfile_hash"] == "b" * 64
+    assert fetched["dependency_lockfile_path"] == "uv.lock"
+    assert fetched["sdk_version"] == "0.2.0"
+
+
 async def test_list_runs_includes_duration_and_token_fields(repo):
     """Regression test: list_runs()'s hand-written SELECT used to omit
     duration_ms (computed) and model_name/tokens_input/tokens_output/
