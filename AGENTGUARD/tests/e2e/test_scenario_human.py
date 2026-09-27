@@ -99,6 +99,65 @@ async def test_human_approval_times_out_and_denies(fake_repository):
     human_decisions = list(fake_repository.human_decisions[run.id].values())
     assert human_decisions[0].status == "timeout"
     assert human_decisions[0].resolved_at is not None
+    # A timeout is not "the reviewer's own reason for rejecting" -- it
+    # must say so distinctly, not silently reuse the original "why
+    # approval was requested" text (that's a different bug this guards).
+    assert "timed out" in human_decisions[0].reason.lower()
+    assert "payment" not in human_decisions[0].reason  # not the escalation text verbatim
+
+
+async def test_human_rejects_with_an_explicit_reason_and_it_is_preserved(fake_repository):
+    run_id_holder: dict = {}
+
+    @monitor(policy=Policy(max_cost=60000, require_approval=["payment"], human_timeout_s=5), llm_judge=False)
+    async def checkout_agent(task: str) -> str:
+        run_id_holder["run_id"] = agentguard.context.current_run().run.id
+        await agentguard.perform_action("payment", amount=99999)
+        return "should never get here"
+
+    async def _resolve_with_reason() -> None:
+        await asyncio.sleep(0.01)
+        broker = get_broker()
+        pending = broker.get_pending(run_id_holder["run_id"])
+        assert pending
+        broker.resolve(pending[0].id, "rejected", resolved_by="reviewer@example.com", reason="over the quarterly travel cap")
+
+    resolver = asyncio.create_task(_resolve_with_reason())
+    with pytest.raises(HumanRejected) as exc_info:
+        await checkout_agent("buy something expensive")
+    await resolver
+
+    assert "over the quarterly travel cap" in str(exc_info.value)
+
+    run = next(iter(fake_repository.runs.values()))
+    human_decisions = list(fake_repository.human_decisions[run.id].values())
+    assert human_decisions[0].reason == "over the quarterly travel cap"
+
+
+async def test_human_rejects_without_a_reason_gets_a_descriptive_fallback_not_the_stale_escalation_text(fake_repository):
+    """Regression test: before this fix, resolving with no explicit
+    `reason` left HumanDecision.reason as whatever text triggered the
+    ESCALATION ("action 'payment' is listed in policy.require_approval")
+    forever -- making a genuine human rejection indistinguishable from a
+    timeout, and from an approval, since the field was never touched by
+    resolve() at all."""
+    run_id_holder: dict = {}
+
+    @monitor(policy=Policy(max_cost=60000, require_approval=["payment"]), llm_judge=False)
+    async def checkout_agent(task: str) -> str:
+        run_id_holder["run_id"] = agentguard.context.current_run().run.id
+        await agentguard.perform_action("payment", amount=99999)
+        return "should never get here"
+
+    resolver = asyncio.create_task(_resolve_soon(run_id_holder, "rejected"))
+    with pytest.raises(HumanRejected):
+        await checkout_agent("buy something expensive")
+    await resolver
+
+    run = next(iter(fake_repository.runs.values()))
+    human_decisions = list(fake_repository.human_decisions[run.id].values())
+    assert "is listed in policy.require_approval" not in human_decisions[0].reason
+    assert "reviewer@example.com" in human_decisions[0].reason
 
 
 async def test_websocket_broker_publishes_the_request(fake_repository):

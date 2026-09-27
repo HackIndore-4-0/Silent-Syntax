@@ -12,6 +12,10 @@ docs/EXECUTION_REPORT_PHASE_2.md for what was actually implemented and
 verified, and docs/PHASE1.md / this module's docstrings for what remains
 deferred to Phase 3/4.
 """
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from . import errors
 from ._runtime import configure
 from .client import AgentGuard, AuthenticationError

@@ -55,6 +55,10 @@ class ApprovalBroker:
         except asyncio.TimeoutError:
             request.status = "timeout"
             request.resolved_at = _now()
+            # Distinct from the original "why approval was requested" text
+            # (still sitting in request.reason) -- a timeout is nobody's
+            # decision, so it must never read like a human's rejection.
+            request.reason = f"timed out waiting for human approval after {request.timeout_s}s"
             resolved = request
             await self._publish(request.run_id, {"type": "approval_resolved", "request": _dump(resolved)})
         finally:
@@ -72,6 +76,7 @@ class ApprovalBroker:
         status: HumanOutcome,
         resolved_by: Optional[str] = None,
         modified_evidence: Optional[dict] = None,
+        reason: Optional[str] = None,
     ) -> Optional[HumanDecision]:
         """Thread-safe: the caller (a REST handler or a WebSocket
         connection) may be running on a different OS thread — and
@@ -86,6 +91,16 @@ class ApprovalBroker:
         `modified_evidence`: a reviewer's corrected proposal params —
         carried on the resolved HumanDecision for perform_action_with_result()
         callers to read back; never mutates `evidence` itself.
+
+        `reason`: the reviewer's own reason for this resolution (e.g. a
+        REST caller's `body.reason`, or a terminal prompt's typed
+        explanation). ALWAYS overwrites `pending.reason` — which up to
+        this point held only "why approval was requested" — with either
+        that explicit reason or, absent one, a fallback that still names
+        who/what resolved it. Never leaves the stale escalation text in
+        place: that made a genuine human rejection indistinguishable from
+        a timeout or an approval, since resolve() never touched the field
+        before this parameter existed.
         """
         pending = self._pending.get(request_id)
         fut = self._futures.get(request_id)
@@ -97,6 +112,7 @@ class ApprovalBroker:
         pending.resolved_at = _now()
         pending.resolved_by = resolved_by
         pending.modified_evidence = modified_evidence
+        pending.reason = reason or (f"{status} by {resolved_by}" if resolved_by else f"status={status}")
 
         def _set_result() -> None:
             if not fut.done():
