@@ -175,6 +175,16 @@ class StepRecorder:
             repository = get_repository()
             await repository.save_trace_step(step)
             self.ctx.record_event("TRACE_STEP", step.model_dump(mode="json"))
+            if step.kind == "llm_call" and outcome == "success" and output is not None:
+                # Fire-and-forget, but tracked via _pending so it's awaited
+                # in drain_pending_trace_writes() before the run is
+                # considered done (same "same-loop task" rationale as
+                # _pending's own docstring) -- never delays the caller's
+                # traced_call()/wrap_llm_client return itself.
+                from . import _pending
+                from ..evaluation.trace_judge import record_trace_judgment
+
+                _pending.schedule(record_trace_judgment(repository, self.ctx.run.workspace_id, self.ctx.run.id, step))
         except Exception:  # noqa: BLE001 - a failed trace write must never crash the agent
             logger.exception(
                 "agentguard.tracing: failed to record trace step %r (%s) for run %s",

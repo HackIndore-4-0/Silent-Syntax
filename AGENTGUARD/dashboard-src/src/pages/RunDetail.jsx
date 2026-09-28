@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Badge, EmptyState, ErrorState, KvRow, LoadingState, Panel, StatusBadge, useApiData } from '../components/ui'
 import { fmtDate, fmtMs, fmtNum, fmtPct, shortId } from '../format'
@@ -184,14 +184,49 @@ function TraceTab({ runId }) {
 // inside an already-@monitor-wrapped run. Distinct from TraceTab above,
 // which shows the coarser audit-event timeline (run-start/decision/etc.),
 // not individual traced calls.
+const JUDGMENT_VERDICT_CLASS = { good: 'complete', needs_improvement: 'degraded', poor: 'stop' }
+
+// Score/verdict/issues/suggested-fix/recommended-model for one llm_call
+// step, computed automatically in the background by
+// agentguard/evaluation/trace_judge.py right after the call finished —
+// no user action needed to see why an output wasn't proper or what
+// model to try instead.
+function JudgmentPanel({ judgment }) {
+  const rec = judgment.recommendation || {}
+  return (
+    <div className="span-judgment" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+      <div className="span-head" style={{ cursor: 'default' }}>
+        <span className="span-type">Judgment</span>
+        {rec.verdict && <StatusBadge label={rec.verdict} cssClass={JUDGMENT_VERDICT_CLASS[rec.verdict] || 'degraded'} />}
+        {rec.score != null && <span className="span-time">score {fmtNum(rec.score, 2)}</span>}
+        {!rec.provider_is_real_llm && (
+          <span className="span-time" style={{ color: 'var(--ink-faint)' }}>(no LLM provider configured — heuristic judge)</span>
+        )}
+      </div>
+      {!!(rec.issues || []).length && (
+        <KvRow label="Issues">{rec.issues.join('; ')}</KvRow>
+      )}
+      {rec.suggested_fix && <KvRow label="What to change">{rec.suggested_fix}</KvRow>}
+      {rec.recommended_model && (
+        <KvRow label="Recommended model">
+          <span className="mono">{rec.recommended_model}</span>
+          {rec.recommended_model_reason ? ` — ${rec.recommended_model_reason}` : ''}
+        </KvRow>
+      )}
+    </div>
+  )
+}
+
 function StepsTab({ runId }) {
   const { loading, error, data } = useApiData(`/api/v2/runs/${runId}/trace-steps`)
+  const { data: judgmentsData } = useApiData(`/api/v2/runs/${runId}/trace-judgments`)
   const [expanded, setExpanded] = useState(new Set())
 
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} />
 
   const steps = data.steps || []
+  const judgmentsByStepId = (judgmentsData && judgmentsData.judgments_by_step_id) || {}
   if (!steps.length) {
     return (
       <EmptyState>
@@ -217,36 +252,43 @@ function StepsTab({ runId }) {
     setExpanded(next)
   }
 
-  const renderStep = (step) => (
-    <div className={`span-node ${expanded.has(step.id) ? 'expanded' : ''}`} key={step.id} onClick={(e) => toggle(step.id, e)}>
-      <div className="span-head">
-        <span className="span-type">{step.kind === 'llm_call' ? 'LLM Call' : 'Function'}</span>
-        <span className="mono">{step.name}</span>
-        <StatusBadge label={step.outcome} cssClass={step.outcome === 'success' ? 'complete' : 'stop'} />
-        <span className="span-time">
-          {fmtMs(step.latency_ms)}
-          {step.model_name ? ` · ${step.model_name}` : ''}
-          {step.tokens_input != null ? ` · ${step.tokens_input}+${step.tokens_output ?? 0} tok` : ''}
-          {step.cost_usd != null ? ` · $${step.cost_usd.toFixed(4)}` : ''}
-        </span>
-      </div>
-      <div className="span-detail">
-        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-          {JSON.stringify(
-            {
-              input: step.input,
-              output: step.output,
-              ...(step.exception_message ? { exception: `${step.exception_type}: ${step.exception_message}` } : {}),
-              ...(step.code_file ? { code: `${step.code_file}:${step.code_lineno} (${step.code_function})` } : {}),
-            },
-            null,
-            2
+  const renderStep = (step) => {
+    const judgment = judgmentsByStepId[step.id]
+    return (
+      <div className={`span-node ${expanded.has(step.id) ? 'expanded' : ''}`} key={step.id} onClick={(e) => toggle(step.id, e)}>
+        <div className="span-head">
+          <span className="span-type">{step.kind === 'llm_call' ? 'LLM Call' : 'Function'}</span>
+          <span className="mono">{step.name}</span>
+          <StatusBadge label={step.outcome} cssClass={step.outcome === 'success' ? 'complete' : 'stop'} />
+          <span className="span-time">
+            {fmtMs(step.latency_ms)}
+            {step.model_name ? ` · ${step.model_name}` : ''}
+            {step.tokens_input != null ? ` · ${step.tokens_input}+${step.tokens_output ?? 0} tok` : ''}
+            {step.cost_usd != null ? ` · $${step.cost_usd.toFixed(4)}` : ''}
+          </span>
+          {step.kind === 'llm_call' && !judgment && step.outcome === 'success' && (
+            <span className="span-time" style={{ color: 'var(--ink-faint)' }}>judging…</span>
           )}
-        </pre>
+        </div>
+        <div className="span-detail">
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+            {JSON.stringify(
+              {
+                input: step.input,
+                output: step.output,
+                ...(step.exception_message ? { exception: `${step.exception_type}: ${step.exception_message}` } : {}),
+                ...(step.code_file ? { code: `${step.code_file}:${step.code_lineno} (${step.code_function})` } : {}),
+              },
+              null,
+              2
+            )}
+          </pre>
+          {judgment && <JudgmentPanel judgment={judgment} />}
+        </div>
+        {(childrenOf.get(step.id) || []).map(renderStep)}
       </div>
-      {(childrenOf.get(step.id) || []).map(renderStep)}
-    </div>
-  )
+    )
+  }
 
   return <div className="span-tree">{(childrenOf.get('root') || []).map(renderStep)}</div>
 }
@@ -288,6 +330,11 @@ function TokensTab({ run }) {
       <KvRow label="Input tokens">{run.tokens_input ?? 'N/A'}</KvRow>
       <KvRow label="Output tokens">{run.tokens_output ?? 'N/A'}</KvRow>
       <KvRow label="Estimated cost">{run.estimated_cost_usd !== null ? `$${run.estimated_cost_usd.toFixed(4)}` : 'N/A'}</KvRow>
+      {run.model_name && (
+        <KvRow label="Model recommendation">
+          <Link to={`/benchmarks?seed_run_id=${run.id}`}>Compare models for this task →</Link>
+        </KvRow>
+      )}
     </Panel>
   )
 }

@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { StatusBadge, Badge, EmptyState, ErrorState, KpiRow, KvRow, LoadingState, Panel, useApiData } from '../components/ui'
 import { LineChart } from '../components/charts'
+import { ModelRecommendationCard } from './EvalPlatform'
 import { fmtDate, fmtMs, fmtPct, shortId } from '../format'
 
 function BreakdownTable({ rows }) {
@@ -134,6 +136,8 @@ export function Tools() {
 
 export function Models() {
   const { loading, error, data } = useApiData('/api/v2/models')
+  const [recsRefreshKey, setRecsRefreshKey] = useState(0)
+  const recsState = useApiData('/api/v2/model-recommendations', [recsRefreshKey])
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} />
   return (
@@ -160,6 +164,14 @@ export function Models() {
           <KvRow label={`${a.primary_model} → ${a.fallback_model}`} key={i}>threshold {a.reliability_threshold}</KvRow>
         )) : <EmptyState>No fallback models registered.</EmptyState>}
       </Panel>
+      <h2 className="page-title" style={{ fontSize: 15, marginTop: 20 }}>Model Recommendations</h2>
+      {recsState.loading ? <LoadingState /> : recsState.error ? <ErrorState error={recsState.error} /> : (
+        recsState.data.length
+          ? recsState.data.map((rec) => (
+            <ModelRecommendationCard key={rec.id} rec={rec} onDecided={() => setRecsRefreshKey((k) => k + 1)} />
+          ))
+          : <EmptyState>No model recommendations yet — run an experiment from the Model Benchmarks page.</EmptyState>
+      )}
     </>
   )
 }

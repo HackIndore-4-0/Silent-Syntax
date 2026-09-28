@@ -998,7 +998,8 @@ class Evidence(BaseModel):
 # Evaluation Platform — Phase 7/8: recommendation + model benchmarking.
 # =====================================================================
 
-RecommendationKind = Literal["metric_suite", "model"]
+RecommendationKind = Literal["metric_suite", "model", "trace_judgment"]
+RecommendationStatus = Literal["pending", "accepted", "rejected"]
 
 
 class Recommendation(BaseModel):
@@ -1010,10 +1011,15 @@ class Recommendation(BaseModel):
     workspace_id: str | None = None
     kind: RecommendationKind
     subject_id: str
-    """agent_name for kind="metric_suite"; benchmark_id for kind="model"."""
+    """agent_name for kind="metric_suite"; benchmark_id for kind="model";
+    TraceStep.id for kind="trace_judgment" (run_id is embedded in
+    `recommendation` for that kind, not a separate column)."""
     recommendation: dict[str, Any] = Field(default_factory=dict)
     reasoning: str
     evidence_ids: list[str] = Field(default_factory=list)
+    status: RecommendationStatus = "pending"
+    decided_at: datetime | None = None
+    decided_by: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
 

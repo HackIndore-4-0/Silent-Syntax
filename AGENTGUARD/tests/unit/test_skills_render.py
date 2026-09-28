@@ -92,6 +92,22 @@ class TestComposeSkill:
         markdown = compose_skill(_request(selected_categories=("rag",), selected_metrics={"rag": ()}))
         assert "RAG evaluation" not in markdown
 
+    def test_tracing_step_is_always_included_and_covers_non_litellm_llm_calls(self):
+        """Regression test: tracing was only mentioned in the function
+        reference appendix and the LangGraph framework body -- a plain
+        Python agent calling an LLM via a raw HTTP client (e.g.
+        OpenRouter without litellm) had no guidance at all on how to
+        trace that call. Tracing must be its own explicit, always-present
+        step covering traced_acompletion (litellm/OpenRouter-via-litellm),
+        wrap_llm_client (a client object), and @traceable (a raw HTTP
+        call function) as three real options, not just one."""
+        markdown = compose_skill(_request(framework="plain_python", selected_categories=()))
+        assert "Trace your LLM and tool calls" in markdown
+        assert "traced_acompletion" in markdown
+        assert "wrap_llm_client" in markdown
+        assert "@traceable" in markdown
+        assert "openrouter" in markdown.lower()
+
     def test_function_reference_section_is_always_included(self):
         """The generated Skill should be a complete-enough reference that
         the coding agent doesn't need to guess at AgentGuard's API --

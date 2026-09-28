@@ -507,3 +507,8 @@ ALTER TABLE agentguard_model_benchmark_results ADD COLUMN IF NOT EXISTS tokens_i
 
 -- EvaluationResult.source_step_id (0014_evaluation_result_source_step.sql) --
 ALTER TABLE agentguard_evaluation_results ADD COLUMN IF NOT EXISTS source_step_id TEXT;
+
+-- Recommendation.status/decided_at/decided_by (0017_recommendation_status.sql) --
+ALTER TABLE agentguard_recommendations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE agentguard_recommendations ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ;
+ALTER TABLE agentguard_recommendations ADD COLUMN IF NOT EXISTS decided_by TEXT;

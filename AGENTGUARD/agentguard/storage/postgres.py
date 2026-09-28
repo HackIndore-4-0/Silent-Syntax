@@ -456,6 +456,31 @@ class PostgresRunRepository(RunRepository):
             checkpoint.created_at,
         )
 
+    async def save_checkpoints(self, checkpoints: list[Checkpoint]) -> None:
+        if not checkpoints:
+            return
+        pool = await self._get_pool()
+        await pool.executemany(
+            """
+            INSERT INTO agentguard_checkpoints
+                (id, run_id, label, seq, state_hash, state, valid, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+            """,
+            [
+                (
+                    c.id,
+                    c.run_id,
+                    c.label,
+                    c.seq,
+                    c.state_hash,
+                    json.dumps(c.state, default=str),
+                    c.valid,
+                    c.created_at,
+                )
+                for c in checkpoints
+            ],
+        )
+
     async def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
         pool = await self._get_pool()
         rows = await pool.fetch(
@@ -489,6 +514,32 @@ class PostgresRunRepository(RunRepository):
             event.event_hash,
             event.policy_version,
             event.created_at,
+        )
+
+    async def save_audit_events(self, events: list[AuditEvent]) -> None:
+        if not events:
+            return
+        pool = await self._get_pool()
+        await pool.executemany(
+            """
+            INSERT INTO agentguard_audit_events
+                (id, run_id, seq, event_type, payload, previous_hash, event_hash, policy_version, created_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
+            """,
+            [
+                (
+                    e.id,
+                    e.run_id,
+                    e.seq,
+                    e.event_type,
+                    json.dumps(e.payload, default=str),
+                    e.previous_hash,
+                    e.event_hash,
+                    e.policy_version,
+                    e.created_at,
+                )
+                for e in events
+            ],
         )
 
     async def list_audit_events(self, run_id: str) -> list[dict[str, Any]]:
@@ -1657,6 +1708,36 @@ class PostgresRunRepository(RunRepository):
         )
         return [{**dict(r), "recommendation": _decode_jsonb(dict(r)["recommendation"]),
                  "evidence_ids": _decode_jsonb(dict(r)["evidence_ids"])} for r in rows]
+
+    async def get_recommendation(self, recommendation_id: str) -> dict[str, Any] | None:
+        pool = await self._get_pool()
+        row = await pool.fetchrow("SELECT * FROM agentguard_recommendations WHERE id = $1", recommendation_id)
+        if row is None:
+            return None
+        d = dict(row)
+        d["recommendation"] = _decode_jsonb(d["recommendation"])
+        d["evidence_ids"] = _decode_jsonb(d["evidence_ids"])
+        return d
+
+    async def update_recommendation_status(
+        self, recommendation_id: str, status: str, decided_by: str, decided_at: datetime
+    ) -> dict[str, Any] | None:
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
+            """
+            UPDATE agentguard_recommendations
+            SET status = $2, decided_by = $3, decided_at = $4
+            WHERE id = $1
+            RETURNING *
+            """,
+            recommendation_id, status, decided_by, decided_at,
+        )
+        if row is None:
+            return None
+        d = dict(row)
+        d["recommendation"] = _decode_jsonb(d["recommendation"])
+        d["evidence_ids"] = _decode_jsonb(d["evidence_ids"])
+        return d
 
     async def save_model_benchmark(self, benchmark: ModelBenchmark) -> None:
         pool = await self._get_pool()

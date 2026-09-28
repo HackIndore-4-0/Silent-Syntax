@@ -29,6 +29,17 @@ export default function Skills() {
 
   function toggleCategory(key) {
     setSelectedCategories((prev) => ({ ...prev, [key]: !prev[key] }))
+    // Checking the category box means "include this whole feature" --
+    // default to every metric under it so it isn't silently dropped
+    // from the generated Skill just because nothing was expanded and
+    // hand-picked underneath. Unchecking leaves selectedMetrics alone
+    // since an unselected category is never rendered anyway.
+    setSelectedMetrics((prev) => {
+      if (prev[key] && prev[key].length > 0) return prev
+      const category = options.categories.find((c) => c.key === key)
+      if (!category || category.metrics.length === 0) return prev
+      return { ...prev, [key]: category.metrics.map((m) => m.key) }
+    })
   }
 
   function toggleMetric(categoryKey, metricKey) {

@@ -387,11 +387,14 @@ async def _worker(poll_interval_s: float) -> None:
     from ..jobs import (
         DATASET_VALIDATION_JOB_KIND,
         EVALUATION_SUITE_RUN_JOB_KIND,
+        MODEL_BENCHMARK_RUN_JOB_KIND,
         Worker,
         make_dataset_validation_handler,
         make_evaluation_run_handler,
+        make_model_benchmark_run_handler,
     )
     from ..llm.provider import get_default_provider
+    from ..tracing.litellm_wrap import make_benchmark_model_call_fn
     import os
 
     handlers: dict[str, Any] = {}
@@ -404,6 +407,14 @@ async def _worker(poll_interval_s: float) -> None:
     # deepeval.* touchpoint in this codebase already uses.
     handlers[EVALUATION_SUITE_RUN_JOB_KIND] = make_evaluation_run_handler(get_repository())
     typer.echo("agentguard worker: evaluation_suite_run handler registered")
+
+    # Also needs only the repository — the real model_call_fn calls
+    # litellm.acompletion directly (no gateway/RunContext requirement),
+    # so this is always registered too, same rationale as above.
+    handlers[MODEL_BENCHMARK_RUN_JOB_KIND] = make_model_benchmark_run_handler(
+        get_repository(), model_call_fn=make_benchmark_model_call_fn()
+    )
+    typer.echo("agentguard worker: model_benchmark_run handler registered")
 
     validation_db_url = os.environ.get("AGENTGUARD_VALIDATION_DB_URL")
     validation_query = os.environ.get("AGENTGUARD_VALIDATION_QUERY")
@@ -430,10 +441,10 @@ async def _worker(poll_interval_s: float) -> None:
 @app.command(
     name="worker",
     help="Run a durable job-queue worker (agentguard/jobs/). Blocks until terminated. Always wires the "
-    "evaluation_suite_run job kind. Also wires dataset_validation when AGENTGUARD_VALIDATION_DB_URL + "
-    "AGENTGUARD_VALIDATION_QUERY are set (the judge model is agentguard.llm.provider.get_default_provider() "
-    "— a real Anthropic call if ANTHROPIC_API_KEY is configured, otherwise the clearly-labeled deterministic "
-    "stand-in).",
+    "evaluation_suite_run and model_benchmark_run job kinds. Also wires dataset_validation when "
+    "AGENTGUARD_VALIDATION_DB_URL + AGENTGUARD_VALIDATION_QUERY are set (the judge model is "
+    "agentguard.llm.provider.get_default_provider() — a real Anthropic call if ANTHROPIC_API_KEY is "
+    "configured, otherwise the clearly-labeled deterministic stand-in).",
 )
 def worker(
     poll_interval_s: float = typer.Option(2.0, "--poll-interval", help="Seconds to sleep between empty-queue polls."),

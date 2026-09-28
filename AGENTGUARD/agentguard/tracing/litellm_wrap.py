@@ -142,6 +142,27 @@ async def _check_gateway_policy_async(gw: "Any | None", call_kwargs: dict[str, A
     raise LLMGatewayViolation(rule, detail)
 
 
+def _record_tokens(extracted: dict[str, Any], cost_usd: float | None) -> None:
+    """Mirrors llm_wrap.py's _record_tokens: reports usage onto the
+    active Run (agentguard/context.py's record_tokens) so Dashboard
+    V2's Tokens & Cost page (which reads Run.tokens_input/output/
+    estimated_cost_usd, not TraceStep) sees calls made through this
+    LiteLLM gateway too. Without this, every traced_completion/
+    traced_acompletion call recorded its usage on the TraceStep only,
+    and the Tokens & Cost page stayed permanently empty for this path."""
+    tokens_input = extracted.get("tokens_input")
+    tokens_output = extracted.get("tokens_output")
+    model_name = extracted.get("model_name")
+    if tokens_input is None and tokens_output is None and cost_usd is None:
+        return
+    try:
+        run_context.record_tokens(
+            model_name=model_name, input_tokens=tokens_input, output_tokens=tokens_output, cost_usd=cost_usd,
+        )
+    except RuntimeError:
+        pass  # no active run somehow slipped through require_run() — never crash on bookkeeping
+
+
 def _check_cost_after_call(ctx: run_context.RunContext, gw: "Any | None", cost_usd: float | None, model: str | None) -> None:
     """Post-call only: real cost is unknowable before the provider
     responds, so a ceiling here can only ever be reported (an audit
@@ -209,6 +230,7 @@ async def traced_acompletion(**kwargs: Any) -> Any:
                 extracted = _extract_output_and_usage(response)
                 cost_usd = _compute_cost(response)
                 _check_cost_after_call(ctx, gw, cost_usd, extracted["model_name"])
+                _record_tokens(extracted, cost_usd)
                 await step.finish_success(
                     _build_output(extracted),
                     tokens_input=extracted["tokens_input"],
@@ -223,6 +245,7 @@ async def traced_acompletion(**kwargs: Any) -> Any:
         extracted = _extract_output_and_usage(response)
         cost_usd = _compute_cost(response)
         _check_cost_after_call(ctx, gw, cost_usd, extracted["model_name"])
+        _record_tokens(extracted, cost_usd)
         await step.finish_success(
             _build_output(extracted),
             tokens_input=extracted["tokens_input"],
@@ -270,6 +293,7 @@ def traced_completion(**kwargs: Any) -> Any:
                     extracted = _extract_output_and_usage(response)
                     cost_usd = _compute_cost(response)
                     _check_cost_after_call(ctx, gw, cost_usd, extracted["model_name"])
+                    _record_tokens(extracted, cost_usd)
                     _pending.schedule(
                         recorder.finish_success(
                             _build_output(extracted),
@@ -286,6 +310,7 @@ def traced_completion(**kwargs: Any) -> Any:
             extracted = _extract_output_and_usage(response)
             cost_usd = _compute_cost(response)
             _check_cost_after_call(ctx, gw, cost_usd, extracted["model_name"])
+            _record_tokens(extracted, cost_usd)
             _pending.schedule(
                 recorder.finish_success(
                     _build_output(extracted),
@@ -310,3 +335,65 @@ def _resolve_fallback_sync(gw: "Any | None", model: str | None) -> "Any | None":
     if gw is None or model is None:
         return None
     return next((a for a in gw.fallback_chain if a.primary_model == model), None)
+
+
+DEFAULT_BENCHMARK_TIMEOUT_S = 60.0
+
+
+def _build_benchmark_messages(case: Any) -> list[dict[str, str]]:
+    """Regression fix: this used to send ONLY `case.input` — for a RAG
+    case, that strips the retrieval_context out entirely, so the
+    candidate model answers with zero grounding while faithfulness/
+    contextual_* evaluators still score it as if it HAD the source
+    run's context. That guarantees low/"wrong" scores that reflect the
+    benchmark harness's missing context, not the candidate model's real
+    quality. Reconstructing the same context the source run had makes
+    the candidate model's response comparable to the original."""
+    context = getattr(case, "retrieval_context", None)
+    if not context:
+        return [{"role": "user", "content": str(case.input)}]
+    context_block = "\n\n".join(str(c) for c in context)
+    content = (
+        f"Context:\n{context_block}\n\n"
+        f"Question: {case.input}\n\n"
+        "Answer using only the information in the context above."
+    )
+    return [{"role": "user", "content": content}]
+
+
+def make_benchmark_model_call_fn(*, timeout_s: float = DEFAULT_BENCHMARK_TIMEOUT_S) -> Any:
+    """A bare `litellm.acompletion` wrapper for ModelBenchmarkEngine's
+    ModelCallFn (agentguard/evaluation/benchmark.py) — deliberately NOT
+    traced_acompletion above. A benchmark experiment calls N candidate
+    models outside any @monitor'd run, so there is no RunContext for
+    require_run()/traced_call() to attach to, no gateway policy to
+    enforce, and nothing to fall back from (the whole point is to
+    observe how the candidate model itself performs). It reuses this
+    module's own _extract_output_and_usage/_compute_cost/_build_output
+    so cost/token extraction stays identical to the traced call path.
+
+    `timeout_s` bounds one call's worst-case latency (litellm passes it
+    straight through to the underlying provider client) -- a single
+    hung provider request must not stall an entire benchmark run.
+    ModelBenchmarkEngine._safe_model_call() catches the resulting
+    litellm.Timeout the same way it catches any other provider error."""
+    from ..evaluation.benchmark import ModelCallResult
+
+    async def call(model: str, case: Any) -> ModelCallResult:
+        import litellm
+
+        messages = _build_benchmark_messages(case)
+        started = time.monotonic()
+        response = await litellm.acompletion(model=model, messages=messages, timeout=timeout_s)
+        latency_ms = (time.monotonic() - started) * 1000.0
+
+        extracted = _extract_output_and_usage(response)
+        cost_usd = _compute_cost(response)
+        return ModelCallResult(
+            actual_output=_build_output(extracted),
+            cost_usd=cost_usd,
+            latency_ms=latency_ms,
+            tokens_input=extracted.get("tokens_input"),
+        )
+
+    return call

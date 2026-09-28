@@ -142,11 +142,26 @@ class RunRepository(ABC):
     @abstractmethod
     async def save_checkpoint(self, checkpoint: Checkpoint) -> None: ...
 
+    async def save_checkpoints(self, checkpoints: list[Checkpoint]) -> None:
+        """Batch form of save_checkpoint(). Default loops one at a time —
+        correct for InMemoryRunRepository (no I/O cost to batch) and any
+        other RunRepository implementation that hasn't opted into a real
+        batched insert. PostgresRunRepository overrides this with a single
+        pool.executemany() call."""
+        for checkpoint in checkpoints:
+            await self.save_checkpoint(checkpoint)
+
     @abstractmethod
     async def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]: ...
 
     @abstractmethod
     async def save_audit_event(self, event: AuditEvent) -> None: ...
+
+    async def save_audit_events(self, events: list[AuditEvent]) -> None:
+        """Batch form of save_audit_event(). Same default-loop rationale
+        as save_checkpoints()."""
+        for event in events:
+            await self.save_audit_event(event)
 
     @abstractmethod
     async def list_audit_events(self, run_id: str) -> list[dict[str, Any]]:
@@ -518,6 +533,16 @@ class RunRepository(ABC):
     async def list_recommendations(
         self, kind: str | None = None, workspace_id: str | None = None
     ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    async def get_recommendation(self, recommendation_id: str) -> dict[str, Any] | None: ...
+
+    @abstractmethod
+    async def update_recommendation_status(
+        self, recommendation_id: str, status: str, decided_by: str, decided_at: datetime
+    ) -> dict[str, Any] | None:
+        """Returns the updated row, or None if recommendation_id doesn't exist."""
+        ...
 
     @abstractmethod
     async def save_model_benchmark(self, benchmark: ModelBenchmark) -> None: ...

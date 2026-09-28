@@ -97,6 +97,44 @@ _ENV_STEP_VERIFY = (
     "current shell session unless exported permanently."
 )
 
+_TRACING_STEP_BODY = """Tracing is what populates the dashboard's Trace/Steps view and gives
+every evaluation metric something real to score — do this regardless of
+which evaluation features you picked below. Instrument every LLM call
+and every significant tool call. Pick whichever of these three matches
+how your agent actually calls its LLM:
+
+    # (a) You call litellm directly (litellm.acompletion/.completion) --
+    #     this covers OpenRouter too, via model="openrouter/<provider>/<model>":
+    from agentguard.tracing import traced_acompletion
+    response = await traced_acompletion(model="openrouter/openai/gpt-4o-mini", messages=[...])
+
+    # (b) You call an LLM client SDK directly (OpenAI, Anthropic, or a
+    #     raw OpenRouter client) and don't want to change every call site --
+    #     wrap the client ONCE, every method call through it is then traced:
+    from agentguard.tracing import wrap_llm_client
+    client = wrap_llm_client(your_openai_or_anthropic_or_openrouter_client)
+
+    # (c) You call the LLM via a raw HTTP request (e.g. `requests`/`httpx`
+    #     directly against OpenRouter's API, no client library) -- wrap the
+    #     function that makes the call instead:
+    from agentguard.tracing import traceable
+
+    @traceable
+    async def call_llm(messages: list) -> str:
+        response = await your_http_client.post(...)  # unchanged
+        return response.json()["choices"][0]["message"]["content"]
+
+Also wrap any significant tool/function call (a search, a database
+query, a file write) the same way as (c) — `@traceable` works on any
+function, not just LLM calls.
+"""
+_TRACING_STEP_VERIFY = (
+    "Run the agent once, open the new Run in the dashboard, and check the "
+    "Trace/Steps tab — you should see one step per traced_acompletion/"
+    "@traceable call (with real latency, and tokens/cost for llm_call "
+    "steps), not just the single top-level @monitor span."
+)
+
 _JUDGE_MODEL_STEP_BODY = """Evaluation metrics need a judge LLM to score outputs. __JUDGE_MODEL__ was
 selected for this Skill; pass it as the registry's default so every
 selected metric uses it unless a metric overrides it:
@@ -180,6 +218,7 @@ def compose_skill(request: SkillRequest) -> str:
         ("Install AgentGuard", _INSTALL_STEP_BODY, _INSTALL_STEP_VERIFY),
         ("Set environment variables", _ENV_STEP_BODY, _ENV_STEP_VERIFY),
         (framework.step_title, framework.body, framework.verify),
+        ("Trace your LLM and tool calls", _TRACING_STEP_BODY, _TRACING_STEP_VERIFY),
     ]
 
     if request.selected_categories:

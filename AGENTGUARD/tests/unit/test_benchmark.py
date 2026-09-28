@@ -72,6 +72,85 @@ class TestModelBenchmarkRun:
         assert {r["model"] for r in results} == set(_FIXTURE.keys())
 
 
+class TestModelBenchmarkRunErrorIsolation:
+    """Regression tests: run() used to have zero error handling around
+    model_call_fn -- one failing (model, case) call aborted the entire
+    benchmark, including every model that hadn't been tried yet. A
+    background job retrying that failure from scratch would then
+    re-spend real money re-querying every model that had already
+    succeeded, only to hit the same failure again."""
+
+    async def test_one_failing_model_does_not_abort_the_others(self, fake_repository):
+        engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})
+
+        async def flaky_call_fn(model, case):
+            if model == "claude-haiku":
+                raise RuntimeError("simulated provider outage")
+            return await _model_call_fn(model, case)
+
+        bench_engine = ModelBenchmarkEngine(fake_repository, engine, flaky_call_fn)
+        case = EvalCase(input="q", actual_output=None, source_run_id="run-1")
+
+        benchmark = await bench_engine.run(_suite(), [case], list(_FIXTURE.keys()))
+
+        assert benchmark is not None
+        results = await fake_repository.list_model_benchmark_results(benchmark.id)
+        assert {r["model"] for r in results} == {"gpt-4o", "gpt-4o-mini"}
+
+    async def test_a_failing_case_is_excluded_not_scored_as_a_bad_response(self, fake_repository):
+        """A call that errors out must never end up scored as if `None`
+        (or an error string) were the model's real answer -- that would
+        misreport an infrastructure failure as a bad response."""
+        engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})
+        good_case = EvalCase(input="q1", actual_output=None, source_run_id="run-1")
+        bad_case = EvalCase(input="q2", actual_output=None, source_run_id="run-2")
+
+        async def flaky_call_fn(model, case):
+            if case.source_run_id == "run-2":
+                raise RuntimeError("simulated timeout")
+            return await _model_call_fn(model, case)
+
+        bench_engine = ModelBenchmarkEngine(fake_repository, engine, flaky_call_fn)
+        benchmark = await bench_engine.run(_suite(), [good_case, bad_case], ["gpt-4o"])
+
+        results = await fake_repository.list_model_benchmark_results(benchmark.id)
+        assert len(results) == 1
+        assert results[0]["example_id"] == "run-1"
+
+    async def test_every_case_failing_for_a_model_skips_it_without_crashing(self, fake_repository):
+        engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})
+        case = EvalCase(input="q", actual_output=None, source_run_id="run-1")
+
+        async def always_fails(model, case):
+            raise RuntimeError("down")
+
+        bench_engine = ModelBenchmarkEngine(fake_repository, engine, always_fails)
+        benchmark = await bench_engine.run(_suite(), [case], ["gpt-4o"])
+
+        assert benchmark is not None
+        assert await fake_repository.list_model_benchmark_results(benchmark.id) == []
+
+
+class TestModelBenchmarkRunWithPreCreatedBenchmark:
+    async def test_run_reuses_a_caller_supplied_benchmark_row(self, fake_repository):
+        from agentguard.models import ModelBenchmark
+
+        engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})
+        bench_engine = ModelBenchmarkEngine(fake_repository, engine, _model_call_fn)
+        case = EvalCase(input="q", actual_output=None, source_run_id="run-1")
+
+        pre_created = ModelBenchmark(suite_id=_suite().id, models=list(_FIXTURE.keys()))
+        await fake_repository.save_model_benchmark(pre_created)
+
+        returned = await bench_engine.run(_suite(), [case], list(_FIXTURE.keys()), benchmark=pre_created)
+
+        assert returned.id == pre_created.id
+        results = await fake_repository.list_model_benchmark_results(pre_created.id)
+        assert len(results) == 3
+        # only the one row the caller pre-created exists — run() didn't save a second one
+        assert len(await fake_repository.list_model_benchmarks()) == 1
+
+
 class TestModelBenchmarkRecommend:
     async def _run_benchmark(self, fake_repository):
         engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})
@@ -131,6 +210,28 @@ class TestModelBenchmarkRecommend:
         stored = await fake_repository.list_recommendations(kind="model")
         assert len(stored) == 1
         assert stored[0]["subject_id"] == benchmark.id
+
+    async def test_recommendation_id_round_trips_to_the_persisted_row(self, fake_repository):
+        bench_engine, benchmark = await self._run_benchmark(fake_repository)
+
+        rec = await bench_engine.recommend(
+            benchmark.id, "cheapest_above_quality_threshold", quality_metric="quality", quality_threshold=0.7
+        )
+
+        assert rec.recommendation_id is not None
+        stored = await fake_repository.get_recommendation(rec.recommendation_id)
+        assert stored is not None
+        assert stored["subject_id"] == benchmark.id
+        assert stored["status"] == "pending"
+
+    async def test_no_eligible_candidate_never_sets_a_recommendation_id(self, fake_repository):
+        bench_engine, benchmark = await self._run_benchmark(fake_repository)
+
+        rec = await bench_engine.recommend(
+            benchmark.id, "cheapest_above_quality_threshold", quality_metric="quality", quality_threshold=0.999
+        )
+
+        assert rec.recommendation_id is None
 
     async def test_best_long_context_filters_by_real_token_count_then_ranks_by_quality(self, fake_repository):
         engine = EvaluationEngine(fake_repository, {"quality": _quality_evaluator()})

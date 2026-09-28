@@ -1,12 +1,79 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { Badge, EmptyState, ErrorState, LoadingState, Panel, StatusBadge, useApiData } from '../components/ui'
+import { useAuth } from '../auth/AuthContext'
+import { Badge, EmptyState, ErrorState, KvRow, LoadingState, Panel, StatusBadge, useApiData } from '../components/ui'
 import { fmtDate, shortId } from '../format'
 
 const STATUS_BADGE_CLASS = {
   VERIFIED: 'reliable', INCORRECT: 'unreliable', UNSUPPORTED: 'degraded', NEEDS_REVIEW: 'degraded',
   AMBIGUOUS: 'degraded', OUTDATED: 'degraded', unvalidated: 'insufficient_data',
+}
+
+// Model recommendations reuse the same reliable/degraded/insufficient_data
+// badge palette ModelProfile.reliability already uses on the Models page,
+// rather than adding new CSS for what's the same "how much can I trust
+// this number" idea.
+const CONFIDENCE_BADGE_CLASS = { HIGH: 'reliable', MODERATE: 'degraded', INSUFFICIENT_DATA: 'insufficient_data' }
+const RECOMMENDATION_STATUS_BADGE_CLASS = { pending: 'pending', accepted: 'approved', rejected: 'rejected' }
+
+const OBJECTIVES = [
+  'cheapest_above_quality_threshold',
+  'fastest_above_quality_threshold',
+  'highest_quality_within_budget',
+  'best_tool_calling_reliability',
+  'best_long_context',
+]
+
+// A stored Recommendation row (from GET /model-recommendations) has
+// `evidence_ids`; the raw POST /benchmarks/{id}/recommend response
+// instead carries `evidence_count` directly — this card renders either
+// shape without the caller needing to normalize first.
+export function ModelRecommendationCard({ rec, onDecided }) {
+  const { user } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const recommended = rec.recommendation || { model: rec.model, objective: rec.objective, alternatives: rec.alternatives }
+  const evidenceCount = rec.evidence_ids?.length ?? rec.evidence_count ?? 0
+
+  async function decide(action) {
+    setBusy(true)
+    try {
+      const updated = await api(`/api/v2/model-recommendations/${rec.id}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ decided_by: user.email }),
+      })
+      onDecided?.(updated)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel
+      header={
+        <>
+          {recommended.model || 'no model met the objective'}{' '}
+          <StatusBadge label={rec.status} cssClass={RECOMMENDATION_STATUS_BADGE_CLASS[rec.status] || rec.status} />{' '}
+          {rec.confidence && (
+            <StatusBadge label={rec.confidence} cssClass={CONFIDENCE_BADGE_CLASS[rec.confidence] || 'insufficient_data'} />
+          )}
+        </>
+      }
+      style={{ marginBottom: 12 }}
+    >
+      <KvRow label="Objective">{recommended.objective || '—'}</KvRow>
+      <KvRow label="Reasoning">{rec.reasoning}</KvRow>
+      <KvRow label="Alternatives">{(recommended.alternatives || []).join(', ') || '—'}</KvRow>
+      <KvRow label="Evidence">{evidenceCount} sample(s) — observed historical performance</KvRow>
+      {rec.created_at && <KvRow label="Created">{fmtDate(rec.created_at)}</KvRow>}
+      {rec.status === 'pending' && (
+        <div className="filters-row" style={{ marginTop: 8 }}>
+          <button className="primary" onClick={() => decide('accept')} disabled={busy}>Accept</button>
+          <button className="danger" onClick={() => decide('reject')} disabled={busy}>Reject</button>
+        </div>
+      )}
+    </Panel>
+  )
 }
 
 export function EvalRuns() {
@@ -202,15 +269,88 @@ export function Suites() {
   )
 }
 
+function RunExperimentForm({ onCreated }) {
+  const [searchParams] = useSearchParams()
+  const { data: suites } = useApiData('/api/v2/suites')
+  const { data: catalog } = useApiData('/api/v2/model-catalog')
+  const [suiteId, setSuiteId] = useState('')
+  const [sourceRunIds, setSourceRunIds] = useState(searchParams.get('seed_run_id') || '')
+  const [selectedModels, setSelectedModels] = useState([])
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState(null)
+
+  function toggleModel(model) {
+    setSelectedModels((prev) => (prev.includes(model) ? prev.filter((m) => m !== model) : [...prev, model]))
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError(null)
+    try {
+      const body = {
+        suite_id: suiteId,
+        source_run_ids: sourceRunIds.split(',').map((s) => s.trim()).filter(Boolean),
+        models: selectedModels,
+      }
+      const res = await api('/api/v2/benchmarks', { method: 'POST', body: JSON.stringify(body) })
+      onCreated(res.benchmark_id)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="filters-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <select value={suiteId} onChange={(e) => setSuiteId(e.target.value)} required>
+          <option value="">Select a suite…</option>
+          {(suites || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <input
+          placeholder="source run ids, comma-separated"
+          value={sourceRunIds}
+          onChange={(e) => setSourceRunIds(e.target.value)}
+          style={{ minWidth: 260 }}
+          required
+        />
+        <button className="primary" type="submit" disabled={submitting || !selectedModels.length}>
+          {submitting ? 'Starting…' : 'Run Experiment'}
+        </button>
+      </div>
+      <div className="filters-row" style={{ flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+        {(catalog || []).map((m) => (
+          <label key={m.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <input type="checkbox" checked={selectedModels.includes(m.model)} onChange={() => toggleModel(m.model)} />
+            {m.model}
+          </label>
+        ))}
+      </div>
+      {error && <ErrorState error={error} />}
+    </form>
+  )
+}
+
 export function Benchmarks() {
   const navigate = useNavigate()
+  const [expanded, setExpanded] = useState(false)
   const { loading, error, data: benchmarks } = useApiData('/api/v2/benchmarks')
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} />
   return (
     <>
       <h1 className="page-title">Model Benchmarks</h1>
-      <Panel>
+      <Panel header={
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Run Experiment</span>
+          <button onClick={() => setExpanded((e) => !e)}>{expanded ? 'Hide' : 'New experiment'}</button>
+        </div>
+      }>
+        {expanded && <RunExperimentForm onCreated={(id) => navigate(`/benchmarks/${id}`)} />}
+      </Panel>
+      <Panel style={{ marginTop: 14 }}>
         <table>
           <thead><tr><th>ID</th><th>Suite</th><th>Models</th><th>Created</th></tr></thead>
           <tbody>
@@ -227,12 +367,83 @@ export function Benchmarks() {
   )
 }
 
+function RecommendForm({ benchmarkId, onRecommended }) {
+  const [objective, setObjective] = useState(OBJECTIVES[0])
+  const [qualityMetric, setQualityMetric] = useState('')
+  const [qualityThreshold, setQualityThreshold] = useState('0.7')
+  const [costBudget, setCostBudget] = useState('')
+  const [minTokens, setMinTokens] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function submit(e) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError(null)
+    try {
+      const body = { objective }
+      if (objective !== 'best_tool_calling_reliability') body.quality_metric = qualityMetric
+      if (['cheapest_above_quality_threshold', 'fastest_above_quality_threshold'].includes(objective)) {
+        body.quality_threshold = Number(qualityThreshold)
+      }
+      if (objective === 'highest_quality_within_budget' && costBudget) body.cost_budget_usd = Number(costBudget)
+      if (objective === 'best_long_context' && minTokens) body.min_tokens_input = Number(minTokens)
+      const rec = await api(`/api/v2/benchmarks/${benchmarkId}/recommend`, { method: 'POST', body: JSON.stringify(body) })
+      onRecommended(rec)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="filters-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <select value={objective} onChange={(e) => setObjective(e.target.value)}>
+          {OBJECTIVES.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        {objective !== 'best_tool_calling_reliability' && (
+          <input
+            placeholder="quality metric (e.g. faithfulness)"
+            value={qualityMetric}
+            onChange={(e) => setQualityMetric(e.target.value)}
+            required
+          />
+        )}
+        {['cheapest_above_quality_threshold', 'fastest_above_quality_threshold'].includes(objective) && (
+          <input type="number" step="0.01" placeholder="quality threshold" value={qualityThreshold} onChange={(e) => setQualityThreshold(e.target.value)} />
+        )}
+        {objective === 'highest_quality_within_budget' && (
+          <input type="number" step="0.001" placeholder="cost budget USD" value={costBudget} onChange={(e) => setCostBudget(e.target.value)} />
+        )}
+        {objective === 'best_long_context' && (
+          <input type="number" placeholder="min tokens input" value={minTokens} onChange={(e) => setMinTokens(e.target.value)} />
+        )}
+        <button className="primary" type="submit" disabled={submitting}>{submitting ? 'Recommending…' : 'Recommend'}</button>
+      </div>
+      {error && <ErrorState error={error} />}
+    </form>
+  )
+}
+
 export function BenchmarkDetail() {
   const { benchmarkId } = useParams()
   const { loading, error, data } = useApiData(`/api/v2/benchmarks/${benchmarkId}`, [benchmarkId])
+  const [recommendation, setRecommendation] = useState(null)
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} />
   const { benchmark, results } = data
+
+  const recAsRow = recommendation && {
+    id: recommendation.recommendation_id,
+    status: recommendation.status || 'pending',
+    confidence: recommendation.confidence,
+    reasoning: recommendation.reasoning,
+    recommendation: { model: recommendation.model, objective: recommendation.objective, alternatives: recommendation.alternatives },
+    evidence_count: recommendation.evidence_count,
+  }
+
   return (
     <>
       <h1 className="page-title">Benchmark {shortId(benchmark.id)}</h1>
@@ -252,6 +463,18 @@ export function BenchmarkDetail() {
           </tbody>
         </table>
       </Panel>
+      <Panel header="Recommend a Model" style={{ marginTop: 14 }}>
+        <RecommendForm benchmarkId={benchmarkId} onRecommended={setRecommendation} />
+      </Panel>
+      {recAsRow && recAsRow.id && (
+        <ModelRecommendationCard
+          rec={recAsRow}
+          onDecided={(updated) => setRecommendation((r) => ({ ...r, status: updated.status }))}
+        />
+      )}
+      {recommendation && !recommendation.recommendation_id && (
+        <Panel style={{ marginTop: 14 }}><EmptyState>No model met this objective's constraints.</EmptyState></Panel>
+      )}
     </>
   )
 }
