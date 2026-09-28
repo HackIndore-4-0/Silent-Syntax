@@ -95,6 +95,30 @@ class DeterministicTestProvider(ModelProvider):
         return json.dumps(verdict)
 
 
+class OpenRouterProvider(ModelProvider):
+    """Real LLM-as-Judge provider using OpenRouter, via the SAME LiteLLM
+    gateway agentguard/tracing/litellm_wrap.py already uses for traced
+    calls (no separate HTTP client story). Activated by
+    `get_default_provider()` the moment `OPENROUTER_API_KEY` is set and
+    `litellm` is installed — checked first (see get_default_provider())
+    because OPENROUTER_API_KEY is the key this project's own .env
+    documents for LLM-as-Judge.
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or os.environ.get("AGENTGUARD_JUDGE_MODEL") or "openrouter/openai/gpt-oss-20b"
+
+    async def complete(self, prompt: str) -> str:
+        import litellm  # deferred: only required if this provider is actually used
+
+        response = await litellm.acompletion(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+        )
+        return response.choices[0].message.content or ""
+
+
 class AnthropicProvider(ModelProvider):
     """Real LLM-as-Judge provider using the Anthropic Python SDK.
 
@@ -125,6 +149,16 @@ class AnthropicProvider(ModelProvider):
         return "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
 
 
+def _openrouter_available() -> bool:
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        return False
+    try:
+        import litellm  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _anthropic_available() -> bool:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False
@@ -138,17 +172,23 @@ def _anthropic_available() -> bool:
 def get_default_provider() -> ModelProvider:
     """Real provider if one is actually configured; otherwise the
     clearly-labeled deterministic stand-in, with a one-time warning.
+    OpenRouter is checked first (it's the key this project's own .env
+    documents for LLM-as-Judge); Anthropic is still checked as a
+    fallback for anyone who configured that instead.
     """
+    if _openrouter_available():
+        return OpenRouterProvider()
     if _anthropic_available():
         return AnthropicProvider()
 
     global _warned_deterministic
     if not _warned_deterministic:
         logger.warning(
-            "agentguard: no LLM provider configured (ANTHROPIC_API_KEY unset or "
-            "`anthropic` not installed) — LLMJudge is using DeterministicTestProvider, "
-            "a non-network, rule-based stand-in. Set ANTHROPIC_API_KEY and install "
-            "the `anthropic` package to use a real model."
+            "agentguard: no LLM provider configured (OPENROUTER_API_KEY/ANTHROPIC_API_KEY "
+            "unset or their client library not installed) — LLMJudge is using "
+            "DeterministicTestProvider, a non-network, rule-based stand-in. Set "
+            "OPENROUTER_API_KEY (with the `litellm` extra installed) or "
+            "ANTHROPIC_API_KEY (with `anthropic` installed) to use a real model."
         )
         _warned_deterministic = True
     return DeterministicTestProvider()

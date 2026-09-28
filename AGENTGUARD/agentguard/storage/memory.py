@@ -650,6 +650,20 @@ class InMemoryRunRepository(RunRepository):
             recs = [r for r in recs if r.workspace_id == workspace_id]
         return [r.model_dump() for r in recs]
 
+    async def get_recommendation(self, recommendation_id: str) -> dict[str, Any] | None:
+        r = self.recommendations.get(recommendation_id)
+        return r.model_dump() if r else None
+
+    async def update_recommendation_status(
+        self, recommendation_id: str, status: str, decided_by: str, decided_at: datetime
+    ) -> dict[str, Any] | None:
+        r = self.recommendations.get(recommendation_id)
+        if r is None:
+            return None
+        updated = r.model_copy(update={"status": status, "decided_by": decided_by, "decided_at": decided_at})
+        self.recommendations[recommendation_id] = updated
+        return updated.model_dump()
+
     async def save_model_benchmark(self, benchmark: ModelBenchmark) -> None:
         self.model_benchmarks[benchmark.id] = benchmark.model_copy(deep=True)
 

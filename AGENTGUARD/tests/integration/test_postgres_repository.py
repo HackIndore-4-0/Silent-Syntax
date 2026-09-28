@@ -18,7 +18,9 @@ import pytest
 
 asyncpg = pytest.importorskip("asyncpg")
 
-from agentguard.models import Decision, EvalResult, Policy, Run, RunStatus  # noqa: E402
+from agentguard.audit.chain import build_chain, verify_audit_chain  # noqa: E402
+from agentguard.checkpoint.engine import CheckpointEngine  # noqa: E402
+from agentguard.models import Decision, EvalResult, Policy, Run, RunStatus, StateSnapshot  # noqa: E402
 from agentguard.storage.postgres import PostgresRunRepository  # noqa: E402
 
 DATABASE_URL = os.environ.get("AGENTGUARD_TEST_DATABASE_URL")
@@ -166,3 +168,61 @@ async def test_failed_run_records_exception(repo):
     fetched = await repo.get_run(run.id)
     assert fetched["status"] == "failed"
     assert fetched["exception_type"] == "ValueError"
+
+
+async def test_save_checkpoints_batch_inserts_all_rows_in_order(repo):
+    run = Run(agent_name="a", policy=Policy(max_cost=60000))
+    await repo.create_run(run)
+
+    engine = CheckpointEngine()
+    checkpoints = [
+        engine.create(run.id, StateSnapshot(label=f"S{i}", seq=i, data={"i": i}))
+        for i in range(1, 4)
+    ]
+    await repo.save_checkpoints(checkpoints)
+
+    stored = await repo.list_checkpoints(run.id)
+    assert [c["label"] for c in stored] == ["S1", "S2", "S3"]
+    assert [c["seq"] for c in stored] == [1, 2, 3]
+    assert stored[1]["state"] == {"i": 2}
+    assert all(len(c["state_hash"]) == 64 for c in stored)
+
+
+async def test_save_checkpoints_empty_list_is_a_noop(repo):
+    run = Run(agent_name="a", policy=Policy(max_cost=60000))
+    await repo.create_run(run)
+
+    await repo.save_checkpoints([])
+
+    assert await repo.list_checkpoints(run.id) == []
+
+
+async def test_save_audit_events_batch_inserts_all_rows_in_order(repo):
+    run = Run(agent_name="a", policy=Policy(max_cost=60000))
+    await repo.create_run(run)
+
+    events = build_chain(
+        run.id,
+        [("RUN_START", {"a": 1}), ("AGENT_STEP", {"b": 2}), ("RUN_COMPLETION", {"c": 3})],
+        policy_version=1,
+    )
+    await repo.save_audit_events(events)
+
+    stored = await repo.list_audit_events(run.id)
+    assert [e["event_type"] for e in stored] == ["RUN_START", "AGENT_STEP", "RUN_COMPLETION"]
+    assert [e["seq"] for e in stored] == [1, 2, 3]
+
+    # The hash chain must replay correctly regardless of executemany's
+    # physical insert order, since replay ordering comes from ORDER BY
+    # seq (a real stored column), not insertion order.
+    result = await verify_audit_chain(repo, run.id)
+    assert result["intact"] is True
+
+
+async def test_save_audit_events_empty_list_is_a_noop(repo):
+    run = Run(agent_name="a", policy=Policy(max_cost=60000))
+    await repo.create_run(run)
+
+    await repo.save_audit_events([])
+
+    assert await repo.list_audit_events(run.id) == []

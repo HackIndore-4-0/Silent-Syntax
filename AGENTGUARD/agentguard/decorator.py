@@ -501,8 +501,8 @@ async def _execute(
         # dict StateSnapshot.data already is.
         checkpoint_engine = CheckpointEngine()
         checkpoints = [checkpoint_engine.create(run.id, snap) for snap in ctx.state_history]
+        await repository.save_checkpoints(checkpoints)
         for checkpoint in checkpoints:
-            await repository.save_checkpoint(checkpoint)
             ctx.record_event(
                 "CHECKPOINT",
                 {"checkpoint_id": checkpoint.id, "label": checkpoint.label, "state_hash": checkpoint.state_hash},
@@ -590,8 +590,8 @@ async def _execute(
                 "consecutive_tool_failures": ctx.consecutive_tool_failures,
             },
         )
-        for event in build_chain(run.id, ctx.audit_log, policy_version=policy.version):
-            await repository.save_audit_event(event)
+        audit_events = build_chain(run.id, ctx.audit_log, policy_version=policy.version)
+        await repository.save_audit_events(audit_events)
 
         from .tracing._pending import drain_pending_trace_writes
 

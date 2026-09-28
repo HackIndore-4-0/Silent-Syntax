@@ -19,6 +19,7 @@ new.
 """
 from __future__ import annotations
 
+import dataclasses
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -38,10 +39,20 @@ from agentguard.reliability.model_profile import ModelProfileEngine
 from agentguard.reliability.report import build_reliability_report
 from agentguard.reliability.tool_profile import ToolProfileEngine
 from agentguard.replay import replay as replay_run
+from agentguard.evaluation.benchmark import ModelBenchmarkEngine
 from agentguard.evaluation.diagnose import diagnose_evaluation_failure
+from agentguard.evaluation.engine import EvaluationEngine
 from agentguard.evaluation.recommend import EvaluationRecommendationEngine
-from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND
-from agentguard.models import EvaluationSuite, Job, SuiteMetric, ToolAlternative
+from agentguard.evaluation.recommendation_confidence import compute_recommendation_confidence
+from agentguard.evaluation.recommendation_workflow import (
+    RecommendationDecisionError,
+    accept_recommendation,
+    reject_recommendation,
+)
+from agentguard.evaluation.trace_judge import TRACE_JUDGMENT_KIND
+from agentguard.jobs import EVALUATION_SUITE_RUN_JOB_KIND, MODEL_BENCHMARK_RUN_JOB_KIND
+from agentguard.llm.catalog import list_catalog
+from agentguard.models import EvaluationSuite, Job, ModelBenchmark, SuiteMetric, ToolAlternative
 from agentguard.skills import (
     SkillRequest,
     UnknownCategoryError,
@@ -233,6 +244,23 @@ async def get_trace_steps_v2(run_id: str, workspace_id: str = Depends(get_curren
     await _owned_run(workspace_id, run_id)
     steps = await repository.list_trace_steps_for_run(run_id)
     return {"run_id": run_id, "steps": steps}
+
+
+@router.get("/runs/{run_id}/trace-judgments")
+async def list_trace_judgments_v2(run_id: str, workspace_id: str = Depends(get_current_workspace_id)):
+    """Per-trace-step LLM-judge quality verdicts + model recommendations
+    (agentguard/evaluation/trace_judge.py), computed automatically in the
+    background right after each llm_call TraceStep finishes — never a
+    user-triggered batch benchmark like /model-recommendations below.
+    Stored as kind="trace_judgment" Recommendation rows keyed by
+    step_id, with run_id embedded in `recommendation` (no schema change
+    needed), keyed here by step_id for O(1) lookup per trace step."""
+    await _owned_run(workspace_id, run_id)
+    rows = await get_repository().list_recommendations(kind=TRACE_JUDGMENT_KIND, workspace_id=workspace_id)
+    by_step_id = {
+        row["subject_id"]: row for row in rows if (row.get("recommendation") or {}).get("run_id") == run_id
+    }
+    return {"run_id": run_id, "judgments_by_step_id": by_step_id}
 
 
 @router.get("/runs/{run_id}/checkpoints")
@@ -1011,6 +1039,123 @@ async def get_benchmark_v2(benchmark_id: str, workspace_id: str = Depends(get_cu
     return {"benchmark": benchmark, "results": results}
 
 
+@router.get("/model-catalog")
+async def get_model_catalog_v2(
+    requires_tools: bool | None = None,
+    requires_vision: bool | None = None,
+    min_context_window: int | None = None,
+    workspace_id: str = Depends(get_current_workspace_id),
+):
+    """Static reference data (agentguard/llm/catalog.py: a short,
+    manually-curated table of well-known models' declared capabilities/
+    list prices, not a live pricing feed and not a quality claim) — used
+    by the "Run Experiment" UI to offer a candidate-model picker and to
+    filter out models that could never satisfy a hard requirement before
+    a benchmark spends real money calling them. Not workspace-scoped
+    storage, but still requires auth for consistency with every other
+    route in this file."""
+    entries = list_catalog(
+        requires_tools=requires_tools, requires_vision=requires_vision, min_context_window=min_context_window
+    )
+    return [dataclasses.asdict(e) for e in entries]
+
+
+class BenchmarkCreateRequestV2(BaseModel):
+    suite_id: str
+    source_run_ids: list[str]
+    models: list[str]
+    dataset_version_id: str | None = None
+
+
+@router.post("/benchmarks", status_code=202)
+async def create_benchmark_v2(body: BenchmarkCreateRequestV2, workspace_id: str = Depends(get_current_workspace_id)):
+    """Enqueues a model_benchmark_run job rather than executing
+    synchronously — real LLM calls to every candidate model, across
+    every case, can take minutes, same rationale as create_eval_run_v2
+    above. Every source_run_id's ownership is checked here, before
+    enqueueing (isolation enforced at the API boundary, not inside the
+    job handler). Unlike create_eval_run_v2, the ModelBenchmark row
+    itself is constructed and saved right here — cheap, no LLM calls,
+    the same thing ModelBenchmarkEngine.run() already does eagerly at
+    the top of a normal (unqueued) call — so the caller gets
+    benchmark_id back immediately and can start polling
+    GET /benchmarks/{id} without waiting on job completion."""
+    repository = get_repository()
+    suite = await repository.get_evaluation_suite(body.suite_id)
+    if suite is None or suite.get("workspace_id") not in (workspace_id, None):
+        raise HTTPException(status_code=404, detail="evaluation suite not found")
+    if not body.models:
+        raise HTTPException(status_code=400, detail="models must be a non-empty list")
+    for run_id in body.source_run_ids:
+        await _owned_run(workspace_id, run_id)
+
+    benchmark = ModelBenchmark(
+        workspace_id=workspace_id, dataset_version_id=body.dataset_version_id,
+        suite_id=body.suite_id, models=list(body.models),
+    )
+    await repository.save_model_benchmark(benchmark)
+
+    job = Job(
+        kind=MODEL_BENCHMARK_RUN_JOB_KIND,
+        payload={
+            "benchmark_id": benchmark.id,
+            "suite_id": body.suite_id,
+            "source_run_ids": body.source_run_ids,
+            "models": body.models,
+            "dataset_version_id": body.dataset_version_id,
+            "workspace_id": workspace_id,
+        },
+        workspace_id=workspace_id,
+    )
+    await repository.enqueue_job(job)
+    return {"benchmark_id": benchmark.id, "job_id": job.id, "status": "queued"}
+
+
+class RecommendRequestV2(BaseModel):
+    objective: str
+    quality_metric: str | None = None
+    quality_threshold: float = 0.7
+    cost_budget_usd: float | None = None
+    min_tokens_input: int | None = None
+
+
+@router.post("/benchmarks/{benchmark_id}/recommend")
+async def recommend_model_v2(
+    benchmark_id: str, body: RecommendRequestV2, workspace_id: str = Depends(get_current_workspace_id)
+):
+    """Calls ModelBenchmarkEngine.recommend() against an already-completed
+    benchmark's stored results — a deterministic ranking against an
+    explicit objective, never a hidden blended score (see benchmark.py's
+    own docstring). recommend() only ever reads already-stored
+    ModelBenchmarkResult/EvaluationResult rows — it never calls a model
+    or the evaluation engine — so a no-op EvaluationEngine and no
+    model_call_fn are all this needs to construct the engine."""
+    repository = get_repository()
+    benchmark = await repository.get_model_benchmark(benchmark_id)
+    if benchmark is None or benchmark.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=404, detail="benchmark not found")
+
+    engine = ModelBenchmarkEngine(repository, EvaluationEngine(repository, {}), None)
+    try:
+        rec = await engine.recommend(
+            benchmark_id, body.objective,
+            quality_metric=body.quality_metric, quality_threshold=body.quality_threshold,
+            cost_budget_usd=body.cost_budget_usd, min_tokens_input=body.min_tokens_input,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "recommendation_id": rec.recommendation_id,
+        "model": rec.model,
+        "objective": rec.objective,
+        "alternatives": rec.alternatives,
+        "reasoning": rec.reasoning,
+        "confidence": compute_recommendation_confidence(len(rec.evidence_ids)),
+        "evidence_count": len(rec.evidence_ids),
+    }
+
+
 # -- Evaluation Platform: Recommendations page -----------------------------------
 
 
@@ -1025,6 +1170,58 @@ async def list_eval_recommendations_v2(
     design doc §10/§11), never at the plain `/recommendations` path,
     which is already the Improvement-candidate page above."""
     return await get_repository().list_recommendations(kind=kind, workspace_id=workspace_id)
+
+
+@router.get("/model-recommendations")
+async def list_model_recommendations_v2(workspace_id: str = Depends(get_current_workspace_id)):
+    """Kept separate from GET /eval-recommendations above (which serves
+    metric_suite and model kinds mixed, with no extra computed fields) —
+    model recommendations additionally carry a computed `confidence` and
+    are the only kind with an accept/reject decision, which the Models
+    page's UI needs directly rather than filtering+annotating the mixed
+    list client-side."""
+    rows = await get_repository().list_recommendations(kind="model", workspace_id=workspace_id)
+    return [{**row, "confidence": compute_recommendation_confidence(len(row.get("evidence_ids") or []))} for row in rows]
+
+
+class RecommendationDecisionRequestV2(BaseModel):
+    decided_by: str
+
+
+async def _owned_recommendation(workspace_id: str, recommendation_id: str) -> dict[str, Any]:
+    repository = get_repository()
+    recommendation = await repository.get_recommendation(recommendation_id)
+    if recommendation is None or recommendation.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=404, detail="recommendation not found")
+    return recommendation
+
+
+@router.post("/model-recommendations/{recommendation_id}/accept")
+async def accept_model_recommendation_v2(
+    recommendation_id: str,
+    body: RecommendationDecisionRequestV2,
+    workspace_id: str = Depends(get_current_workspace_id),
+):
+    await _owned_recommendation(workspace_id, recommendation_id)
+    repository = get_repository()
+    try:
+        return await accept_recommendation(repository, recommendation_id, body.decided_by)
+    except RecommendationDecisionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/model-recommendations/{recommendation_id}/reject")
+async def reject_model_recommendation_v2(
+    recommendation_id: str,
+    body: RecommendationDecisionRequestV2,
+    workspace_id: str = Depends(get_current_workspace_id),
+):
+    await _owned_recommendation(workspace_id, recommendation_id)
+    repository = get_repository()
+    try:
+        return await reject_recommendation(repository, recommendation_id, body.decided_by)
+    except RecommendationDecisionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # -- Skills Generator -----------------------------------------------------------------

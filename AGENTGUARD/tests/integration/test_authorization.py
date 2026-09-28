@@ -345,6 +345,38 @@ def test_user_a_cannot_access_user_b_benchmarks(repo, client):
     assert all(b["id"] != benchmark.id for b in bob_benchmarks)
 
 
+def test_user_a_cannot_access_user_b_model_recommendations(repo, client):
+    from agentguard.models import Recommendation
+
+    alice = _login(client, email="alice8b@example.com", name="Alice8b", repo=repo)
+    bob = _login(client, email="bob8b@example.com", name="Bob8b", repo=repo)
+
+    recommendation = Recommendation(
+        workspace_id=alice["signup"].workspace.id, kind="model", subject_id="benchmark-1",
+        recommendation={"model": "gpt-4o-mini"}, reasoning="stub",
+    )
+    asyncio.run(repo.save_recommendation(recommendation))
+
+    bob_client = _fresh_client_for(bob["cookies"])
+    alice_client = _fresh_client_for(alice["cookies"])
+
+    bob_recommendations = bob_client.get("/api/v2/model-recommendations").json()
+    assert all(r["id"] != recommendation.id for r in bob_recommendations)
+    alice_recommendations = alice_client.get("/api/v2/model-recommendations").json()
+    assert any(r["id"] == recommendation.id for r in alice_recommendations)
+
+    decision_body = {"decided_by": "bob@example.com"}
+    assert bob_client.post(f"/api/v2/model-recommendations/{recommendation.id}/accept", json=decision_body).status_code == 404
+    assert bob_client.post(f"/api/v2/model-recommendations/{recommendation.id}/reject", json=decision_body).status_code == 404
+
+    stored = asyncio.run(repo.get_recommendation(recommendation.id))
+    assert stored["status"] == "pending"  # bob's rejected 404 never touched alice's row
+
+    assert alice_client.post(
+        f"/api/v2/model-recommendations/{recommendation.id}/accept", json={"decided_by": "alice@example.com"}
+    ).status_code == 200
+
+
 def test_user_a_cannot_diagnose_user_b_eval_results(repo, client):
     from agentguard.evaluation import CustomEvaluator, EvalCase, EvaluationEngine, EvaluationSuite, SuiteMetric
     from agentguard.models import EvaluationResult
@@ -422,3 +454,87 @@ def test_user_a_cannot_create_eval_run_against_user_b_owned_run(repo, client):
 
     assert response.status_code == 404
     assert asyncio.run(repo.list_jobs()) == []
+
+
+def test_alice_can_run_a_model_benchmark_and_accept_its_recommendation_end_to_end(repo, client):
+    from agentguard.evaluation.benchmark import ModelCallResult
+    from agentguard.jobs import MODEL_BENCHMARK_RUN_JOB_KIND, Worker, make_model_benchmark_run_handler
+
+    alice = _signup_and_seed_run(repo, client, email="alice13@example.com", name="Alice13")
+    alice_client = _fresh_client_for(alice["cookies"])
+
+    suite_id = alice_client.post(
+        "/api/v2/suites", json={"name": "alice_bench_suite", "metrics": [{"evaluator": "trajectory"}]}
+    ).json()["id"]
+
+    create_response = alice_client.post(
+        "/api/v2/benchmarks",
+        json={"suite_id": suite_id, "source_run_ids": [alice["run_id"]], "models": ["model-a", "model-b"]},
+    )
+    assert create_response.status_code == 202
+    benchmark_id = create_response.json()["benchmark_id"]
+    job_id = create_response.json()["job_id"]
+    assert alice_client.get(f"/api/v2/jobs/{job_id}").json()["kind"] == MODEL_BENCHMARK_RUN_JOB_KIND
+
+    async def stub_model_call_fn(model, case):
+        return ModelCallResult(actual_output=f"{model}'s answer", cost_usd=0.01, latency_ms=100.0)
+
+    worker = Worker(repo, {MODEL_BENCHMARK_RUN_JOB_KIND: make_model_benchmark_run_handler(repo, model_call_fn=stub_model_call_fn)})
+    asyncio.run(worker.run_once())
+
+    assert alice_client.get(f"/api/v2/jobs/{job_id}").json()["status"] == "complete"
+    detail = alice_client.get(f"/api/v2/benchmarks/{benchmark_id}").json()
+    assert {r["model"] for r in detail["results"]} == {"model-a", "model-b"}
+
+    recommend_response = alice_client.post(
+        f"/api/v2/benchmarks/{benchmark_id}/recommend",
+        json={"objective": "fastest_above_quality_threshold", "quality_metric": "trajectory", "quality_threshold": 0.0},
+    )
+    assert recommend_response.status_code == 200
+    recommendation_id = recommend_response.json()["recommendation_id"]
+    assert recommendation_id is not None
+    assert recommend_response.json()["confidence"] == "INSUFFICIENT_DATA"  # 1 case x 1 metric = 1 evidence row
+
+    listed = alice_client.get("/api/v2/model-recommendations").json()
+    assert any(r["id"] == recommendation_id for r in listed)
+
+    accept_response = alice_client.post(
+        f"/api/v2/model-recommendations/{recommendation_id}/accept", json={"decided_by": "alice13@example.com"}
+    )
+    assert accept_response.status_code == 200
+    assert accept_response.json()["status"] == "accepted"
+
+
+def test_user_a_cannot_create_benchmark_against_user_b_suite(repo, client):
+    alice = _signup_and_seed_run(repo, client, email="alice14@example.com", name="Alice14")
+    bob = _signup_and_seed_run(repo, client, email="bob14@example.com", name="Bob14")
+    alice_client = _fresh_client_for(alice["cookies"])
+    bob_client = _fresh_client_for(bob["cookies"])
+
+    bob_suite_id = bob_client.post("/api/v2/suites", json={"name": "bob_bench_suite", "metrics": []}).json()["id"]
+
+    response = alice_client.post(
+        "/api/v2/benchmarks",
+        json={"suite_id": bob_suite_id, "source_run_ids": [alice["run_id"]], "models": ["model-a"]},
+    )
+
+    assert response.status_code == 404
+    assert asyncio.run(repo.list_jobs()) == []
+    assert asyncio.run(repo.list_model_benchmarks()) == []
+
+
+def test_user_a_cannot_create_benchmark_against_user_b_owned_run(repo, client):
+    alice = _signup_and_seed_run(repo, client, email="alice15@example.com", name="Alice15")
+    bob = _signup_and_seed_run(repo, client, email="bob15@example.com", name="Bob15")
+    alice_client = _fresh_client_for(alice["cookies"])
+
+    suite_id = alice_client.post("/api/v2/suites", json={"name": "alice_bench_suite2", "metrics": []}).json()["id"]
+
+    response = alice_client.post(
+        "/api/v2/benchmarks",
+        json={"suite_id": suite_id, "source_run_ids": [bob["run_id"]], "models": ["model-a"]},
+    )
+
+    assert response.status_code == 404
+    assert asyncio.run(repo.list_jobs()) == []
+    assert asyncio.run(repo.list_model_benchmarks()) == []

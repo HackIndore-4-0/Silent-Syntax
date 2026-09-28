@@ -15,6 +15,8 @@ RagasEvaluator don't dictate the judge model's client library either.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,6 +26,8 @@ from ..reliability.model_profile import ModelProfileEngine
 from ..storage.repository import RunRepository
 from .engine import EvaluationEngine
 from .evaluators.base import EvalCase
+
+logger = logging.getLogger("agentguard.evaluation.benchmark")
 
 
 @dataclass
@@ -65,6 +69,10 @@ class ModelRecommendation:
     reasoning: str
     alternatives: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
+    recommendation_id: str | None = None
+    """The persisted Recommendation row's id, set once save_recommendation()
+    has run — None only for the "no model met the objective" early return,
+    which never saves a Recommendation at all."""
 
 
 class ModelBenchmarkEngine:
@@ -81,14 +89,34 @@ class ModelBenchmarkEngine:
         *,
         dataset_version_id: str | None = None,
         workspace_id: str | None = None,
+        benchmark: ModelBenchmark | None = None,
     ) -> ModelBenchmark:
-        benchmark = ModelBenchmark(
-            workspace_id=workspace_id, dataset_version_id=dataset_version_id, suite_id=suite.id, models=list(models)
-        )
-        await self._repository.save_model_benchmark(benchmark)
+        """`benchmark`: when the caller (e.g. the dashboard API route) has
+        already constructed+saved the ModelBenchmark row itself — to hand
+        the id back to the client immediately, before the slow per-model
+        LLM calls below even start — reuse that row instead of creating a
+        second one. When omitted (the original, still-supported call
+        shape), this method creates and saves it as before."""
+        if benchmark is None:
+            benchmark = ModelBenchmark(
+                workspace_id=workspace_id, dataset_version_id=dataset_version_id, suite_id=suite.id, models=list(models)
+            )
+            await self._repository.save_model_benchmark(benchmark)
 
         for model in models:
-            call_results = [await self._model_call_fn(model, case) for case in cases]
+            call_results = await asyncio.gather(
+                *(self._safe_model_call(model, case) for case in cases)
+            )
+            # A failed (model, case) call comes back as None (logged inside
+            # _safe_model_call) instead of raising -- one bad case or one
+            # bad model must never abort every other case/model in the
+            # benchmark, and a call that errored out must never be scored
+            # as if `None`/an error string were the model's real answer
+            # (that would misreport a call failure as a bad response).
+            successful = [(case, cr) for case, cr in zip(cases, call_results) if cr is not None]
+            if not successful:
+                continue  # every case failed for this model -- nothing to evaluate
+
             model_cases = [
                 EvalCase(
                     input=case.input,
@@ -99,28 +127,44 @@ class ModelBenchmarkEngine:
                     source_run_id=case.source_run_id,
                     trace_steps=case.trace_steps,
                 )
-                for case, call_result in zip(cases, call_results)
+                for case, call_result in successful
             ]
 
             evaluation_run = await self._evaluation_engine.run_suite(suite, model_cases, workspace_id=workspace_id)
             results = await self._repository.list_evaluation_results(evaluation_run.id)
 
-            n_cases = len(cases) or 1
+            n_cases = len(successful)
             for i, result_row in enumerate(results):
-                case_idx = i % n_cases
-                call_result = call_results[case_idx] if cases else None
+                case, call_result = successful[i % n_cases]
                 bench_result = ModelBenchmarkResult(
                     benchmark_id=benchmark.id,
                     model=model,
-                    example_id=cases[case_idx].source_run_id if cases else None,
+                    example_id=case.source_run_id,
                     evaluation_result_id=result_row["id"],
-                    cost_usd=call_result.cost_usd if call_result else None,
-                    latency_ms=call_result.latency_ms if call_result else 0.0,
-                    tokens_input=call_result.tokens_input if call_result else None,
+                    cost_usd=call_result.cost_usd,
+                    latency_ms=call_result.latency_ms,
+                    tokens_input=call_result.tokens_input,
                 )
                 await self._repository.save_model_benchmark_result(bench_result)
 
         return benchmark
+
+    async def _safe_model_call(self, model: str, case: EvalCase) -> "ModelCallResult | None":
+        """Isolates one (model, case) LLM call: a provider error (bad
+        model id, missing/invalid API key, rate limit, timeout, ...) is
+        logged and turned into `None` here instead of propagating out of
+        run() -- otherwise a single failing call aborts the ENTIRE
+        benchmark (every other case, every other model), and a retry of
+        the whole job re-spends real money re-querying every model that
+        had already succeeded, only to fail at the same call again."""
+        try:
+            return await self._model_call_fn(model, case)
+        except Exception:
+            logger.exception(
+                "model call failed during benchmark: model=%r source_run_id=%r",
+                model, case.source_run_id,
+            )
+            return None
 
     async def recommend(
         self,
@@ -219,6 +263,7 @@ class ModelBenchmarkEngine:
         return ModelRecommendation(
             benchmark_id=benchmark_id, objective=objective, model=best["model"],
             reasoning=reasoning, alternatives=alternatives, evidence_ids=best["evidence_ids"],
+            recommendation_id=recommendation.id,
         )
 
     async def _recommend_by_tool_reliability(
@@ -270,4 +315,5 @@ class ModelBenchmarkEngine:
         return ModelRecommendation(
             benchmark_id=benchmark_id, objective="best_tool_calling_reliability", model=best.model,
             reasoning=reasoning, alternatives=alternatives, evidence_ids=[],
+            recommendation_id=recommendation.id,
         )

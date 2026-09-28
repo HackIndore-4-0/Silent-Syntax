@@ -8,8 +8,10 @@ from ..models import Job, JobStatus
 from .handlers import (
     DATASET_VALIDATION_JOB_KIND,
     EVALUATION_SUITE_RUN_JOB_KIND,
+    MODEL_BENCHMARK_RUN_JOB_KIND,
     make_dataset_validation_handler,
     make_evaluation_run_handler,
+    make_model_benchmark_run_handler,
 )
 from .worker import JobHandler, PermanentJobFailure, Worker
 
@@ -23,4 +25,6 @@ __all__ = [
     "make_dataset_validation_handler",
     "EVALUATION_SUITE_RUN_JOB_KIND",
     "make_evaluation_run_handler",
+    "MODEL_BENCHMARK_RUN_JOB_KIND",
+    "make_model_benchmark_run_handler",
 ]
